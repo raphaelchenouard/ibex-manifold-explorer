@@ -1,0 +1,586 @@
+<html>
+
+<head>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/crossfilter2/1.4.3/crossfilter.min.js"></script>
+    <script type="text/javascript" src="https://d3js.org/d3.v4.min.js"></script>
+    <style>
+        #drop_zone {
+            border: 2px dashed grey;
+            width: 300px;
+            height: 50px;
+            margin: 10px;
+        }
+
+    </style>
+</head>
+
+<body>
+    <h1>Manifold Explorer</h1>
+    <div id="drop_zone" ondrop="drop_handler(event);" ondragover="dragover_handler(event);" ondragend="dragend_handler(event);">
+        <strong>Drag one manifold file here ...</strong>
+    </div>
+    <div id="explorer">
+        <div id="control"></div>
+        <div id="info"></div>
+        <div id="detail"></div>
+    </div>
+    <div id="selection">
+        <div id="info_selection"></div>
+        <div id="detail_selection"></div>
+    </div>
+
+
+    <script>
+        var sols = []; // raw solutions
+        var mins = []; // min value for each dimension
+        var maxs = []; // max value for each dimension
+
+        var nb_var = 0; // number of dimension
+        var cf; // crossfilter object
+        var filter_by_status = []; // crossfilter dimension filtering on status
+        var filter_sol = []; // crossfilter dimension used to filter solutions
+        var plotted_sols = []; // plotted solutions after filtering
+
+        var width, height, margin;
+        var xscale, yscale; // d3 scale objects
+        var xratio, yratio; // ratio for scaling width of interval
+        var xAxis, yAxis; // d3 axis
+        var gX, gY; // svg g tag embedding axis
+
+        var brush, focus;
+
+        var curXDim = 0; // current X dimension
+        var curYDim = 1; // current Y dimension
+
+        var status_names = ["Inner", "Boundary", "Unkown", "Pending", "All"];
+        var status_codes = {};
+        for (var i = 0; i < status_names.length; i++) {
+            status_codes[status_names[i]] = i;
+        }
+
+        // Generate a string with all values
+        sol2string = (sol) => {
+            var str = "[" + sol.lowers[0] + "," + sol.uppers[0] + "]";
+            for (var i = 1; i < nb_var; i++) {
+                str += " x [" + sol.lowers[i] + "," + sol.uppers[i] + "]";
+            }
+            return str;
+        }
+
+        // Generate a string with current dimensions
+        printsol = (sol) => {
+            var str = "[" + sol.lowers[curXDim] + "," + sol.uppers[curXDim] + "]";
+            str += " x [" + sol.lowers[curYDim] + "," + sol.uppers[curYDim] + "]";
+            return str;
+        }
+
+        // print the result of a filter
+        function print_filter(filter) {
+            var f = eval(filter);
+            if (typeof(f.length) != "undefined") {} else {}
+            if (typeof(f.top) != "undefined") {
+                f = f.top(Infinity);
+            } else {}
+            if (typeof(f.dimension) != "undefined") {
+                f = f.dimension(function(d) {
+                    return "";
+                }).top(Infinity);
+            } else {}
+            console.log(filter + "(" + f.length + ") = " + JSON.stringify(f).replace("[", "[\n\t").replace(/}\,/g, "},\n\t").replace("]", "\n]"));
+        }
+
+        // generate solutions from a buffer, ie. binary mnf
+        function parse_data(buffer) {
+            try {
+                sols = [];
+                mins = [];
+                maxs = [];
+                var dec = new TextDecoder();
+                const signature = dec.decode(buffer.slice(0, 19));
+                console.log();
+                const view = new DataView(buffer.slice(20));
+                var cursor = 0;
+                const ver = view.getUint32(cursor, true);
+                cursor += 4;
+                console.log(signature + ver);
+
+                nb_var = view.getUint32(cursor, true);
+                cursor += 4;
+                const nb_eq = view.getUint32(cursor, true);
+                cursor += 4;
+                const nb_ineq = view.getUint32(cursor, true);
+                cursor += 4;
+                console.log(nb_var + " variables, " + nb_eq + " equalities and " + nb_ineq + " inequalities");
+
+                const result_status = view.getUint32(cursor, true);
+                cursor += 4;
+                console.log("Result status: " + result_status);
+
+                const nb_inner = view.getUint32(cursor, true);
+                cursor += 4;
+                const nb_boundary = view.getUint32(cursor, true);
+                cursor += 4;
+                const nb_unknown = view.getUint32(cursor, true);
+                cursor += 4;
+                const nb_pending = view.getUint32(cursor, true);
+                cursor += 4;
+                console.log("inner: " + nb_inner + ", boundary: " + nb_boundary + ", unknown: " + nb_unknown + ", pending: " + nb_pending);
+                const solving_time = view.getFloat64(cursor, true);
+                cursor += 8;
+                const nb_cells = view.getUint32(cursor, true);
+                cursor += 4;
+                console.log("Solving time: " + solving_time + "s, number of cells: " + nb_cells);
+
+                for (var i = 0; i < nb_inner + nb_pending + nb_unknown + nb_boundary; i++) {
+                    var sol = new Object();
+                    sol.lowers = [];
+                    sol.uppers = [];
+                    sol.width = [];
+                    for (var j = 0; j < nb_var; j++) {
+                        var low = view.getFloat64(cursor, true);
+                        cursor += 8;
+                        var up = view.getFloat64(cursor, true);
+                        cursor += 8;
+                        sol.lowers.push(low);
+                        sol.uppers.push(up);
+                        sol.width.push(up - low);
+                        if (i == 0) {
+                            mins.push(low);
+                            maxs.push(up);
+                        } else {
+                            if (mins[j] > low) {
+                                mins[j] = low;
+                            }
+                            if (maxs[j] < up) {
+                                maxs[j] = up;
+                            }
+                        }
+                    }
+                    sol.status = view.getUint32(cursor, true);
+                    cursor += 4;
+                    var nb_proof = view.getUint32(cursor, true); // unused data: number of constants values to achieve proof of solution
+                    cursor += 4;
+                    //console.log(sol);
+                    sols.push(sol);
+                }
+                console.log(sols.length + " solutions read!");
+            } catch (err) {
+                console.log(`There was an error: ${err}`);
+            }
+        }
+
+
+
+        // update the drawing after an event or change in data
+        function update_svg(svg,color = "green") {
+
+            // Define scale domain relating to current dimensions
+            xscale.domain([mins[curXDim], maxs[curXDim]]);
+            yscale.domain([mins[curYDim], maxs[curYDim]]);
+
+            console.log("x in [" + mins[curXDim] + "," + maxs[curXDim] + "] - " + (maxs[curXDim] - mins[curXDim]));
+            console.log("y in [" + mins[curYDim] + "," + maxs[curYDim] + "] - " + (maxs[curYDim] - mins[curYDim]));
+
+            // Update axis name
+            d3.select("#legend_x").text("x" + curXDim);
+            d3.select("#legend_y").text("x" + curYDim);
+
+            // Update ratio
+            var xratio = width / (maxs[curXDim] - mins[curXDim]);
+            var yratio = height / (maxs[curYDim] - mins[curYDim]);
+
+            //svg.append('g')
+            //    .attr('transform', "translate(" + margin.left + "," + margin.top + ")");
+            //console.log(JSON.stringify(plotted_sols));
+            console.log("plotting (" + plotted_sols.length + ") ...");
+            // Add data
+            svg.append('g')
+                .attr("id", "manifold")
+                .attr('transform', "translate(" + margin.left + "," + margin.top + ")")
+                .selectAll("rect").data(plotted_sols).enter().append("rect")
+                //for (var i=0;i<plotted_sols.length;i++){ var sol = plotted_sols[i];
+                //svg.append("rect").datum(sol)
+                .attr("x", (sol) => {
+                    console.log(JSON.stringify(sol));
+                    return xscale(sol.lowers[curXDim])
+                })
+                .attr("y", (sol) => {
+                    return yscale(sol.uppers[curYDim])
+                })
+                .attr("class", "box")
+                .attr("width", (sol) => {
+                    return xratio * sol.width[curXDim]
+                })
+                .attr("height", (sol) => {
+                    return yratio * sol.width[curYDim]
+                })
+                .attr("fill", color).attr("opacity", 0.2)
+                .on("mouseover", function(d) {
+                    //Get this bar's x/y values, then augment for the tooltip
+                    var xPos = parseFloat(d3.select(this).attr("x"));
+                    var yPos = parseFloat(d3.select(this).attr("y"));
+                    //console.log(sol2string(d));
+                    d3.select("#detail").html("Solution detail (status=" + d.status + "): " + printsol(d));
+                    d3.select(this)
+                        .attr("fill", "orange")
+                        .transition()
+                        .duration(250);
+
+                    focus.select('line.x1')
+                        .attr('x1', xscale(d.lowers[curXDim]))
+                        .attr('x2', xscale(d.lowers[curXDim]))
+                        .attr('y1', yscale(d.lowers[curYDim]))
+                        .attr('y2', height);
+                    focus.select('line.x2')
+                        .attr('x1', xscale(d.uppers[curXDim]))
+                        .attr('x2', xscale(d.uppers[curXDim]))
+                        .attr('y1', yscale(d.lowers[curYDim]))
+                        .attr('y2', height);
+
+                    focus.select('line.y1')
+                        .attr('x1', 0)
+                        .attr('x2', xscale(d.lowers[curXDim]))
+                        .attr('y1', yscale(d.lowers[curYDim]))
+                        .attr('y2', yscale(d.lowers[curYDim]));
+                    focus.select('line.y2')
+                        .attr('x1', 0)
+                        .attr('x2', xscale(d.lowers[curXDim]))
+                        .attr('y1', yscale(d.uppers[curYDim]))
+                        .attr('y2', yscale(d.uppers[curYDim]));
+                    focus.style('display', null);
+                })
+                .on("mouseout", function() {
+                    d3.select(this)
+                        .transition()
+                        .duration(250)
+                        .attr("fill", color);
+                    //Remove the tooltip
+                    //d3.select("#tooltip").remove();
+                    focus.style('display', 'none');
+                });
+            //}
+
+            d3.select("#info").html(plotted_sols.length + " solutions displayed");
+
+        }
+
+
+        // Create the initial drawing with default values
+        function create_svg(node, w = 800, h = 600, marg = null) {
+            if (marg == null) {
+                margin = {
+                    top: 20,
+                    right: 20,
+                    bottom: 50,
+                    left: 70
+                };
+            } else {
+                margin = marg;
+            }
+            width = w - margin.left - margin.right,
+                height = h - margin.top - margin.bottom;
+            var svg = node.append("svg")
+                .attr('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+                .attr('width', w)
+                .attr('height', h)
+                .attr('id', 'plot_0')
+                .append('g')
+                .attr('transform', "translate(" + margin.left + "," + margin.top + ")");
+
+            // Initialize scale objects
+            xscale = d3.scaleLinear().range([-1, width + 1]);
+            yscale = d3.scaleLinear().range([height + 1, -1]);
+
+            // Initialize axis objects left and bottom
+            xAxis = d3.axisBottom(xscale).ticks(10);
+            yAxis = d3.axisLeft(yscale).ticks(10);
+            // Add the x Axis
+            gX = svg.append("g")
+                .attr("transform", "translate(" + 0 + "," + height + ")")
+                .call(xAxis);
+            // Add the y Axis
+            var gY = svg.append("g")
+                //.attr("transform", "translate(" + margin.left + "," + 0 + ")")
+                .call(yAxis);
+            // text label for the x axis
+            svg.append("text")
+                .attr("id", "legend_x")
+                .attr("transform",
+                    "translate(" + (w / 2) + " ," +
+                    (height + margin.top + margin.bottom / 2) + ")")
+                .style("text-anchor", "middle")
+                .text("x" + curXDim);
+            // text label for the y axis
+            svg.append("text")
+                .attr("id", "legend_y")
+                //.attr("transform", "rotate(-90)")
+                .attr("x", -margin.left / 2)
+                .attr("y", h / 2)
+                .style("text-anchor", "middle")
+                .text("x" + curYDim);
+
+
+            update_svg(d3.select("#plot_0"));
+
+            // Add brush selection
+            brush = d3.brush()
+                .on("end", brushed);
+
+            function brushed() {
+                if (d3.event.selection != null) {
+                    var selection = d3.event.selection;
+                    //console.log("brush: " + JSON.stringify(selection));
+                    var x1 = Math.min(xscale.invert(selection[0][0]), xscale.invert(selection[1][0]));
+                    var x2 = Math.max(xscale.invert(selection[0][0]), xscale.invert(selection[1][0]));
+                    var y1 = Math.min(yscale.invert(selection[0][1]), yscale.invert(selection[1][1]));
+                    var y2 = Math.max(yscale.invert(selection[0][1]), yscale.invert(selection[1][1]));
+
+                    //console.log("Brush from (" + x1 + "x" + y1 + ") to (" + x2 + "x" + y2 + ")");
+
+                    filter_sol.filterFunction(function(d) {
+                        //console.log(JSON.stringify(d));
+                        return d.lowers[curXDim] >= x1 && d.uppers[curXDim] <= x2 && d.lowers[curYDim] >= y1 && d.uppers[curYDim] <= y2;
+                    });
+                    //var selected = filter_sol.top(Infinity);
+                    //svg.selectAll("rect").data(selected).enter().attr("fill", "red");
+                    plotted_sols = filter_sol.top(Infinity);
+                    update_svg(d3.select("#plot_0"));
+                }
+            }
+
+            svg.append("g")
+                .attr("class", "brush")
+                .call(brush);
+
+            // Add objects when focus on a box
+            focus = svg.append('g')
+                .attr('class', 'focus')
+                .style('display', 'none');
+
+            focus.append('line')
+                .classed('x1', true);
+            focus.append('line')
+                .classed('x2', true);
+
+            focus.append('line')
+                .classed('y1', true);
+            focus.append('line')
+                .classed('y2', true);
+
+            d3.selectAll('.focus line')
+                .style('fill', 'none')
+                .style('stroke', 'black')
+                .style('stroke-width', '1.5px')
+                .style('stroke-dasharray', '3 3')
+                .style('opacity', 0.7);
+
+            /*var zoom = d3.zoom()
+                .scaleExtent([1, 10])
+                .translateExtent([
+                    [-100, -100],
+                    [width + 90, height + 100]
+                ])
+                .on("zoom", zoomed);*/
+
+            /*var view = svg.append("rect")
+                .attr("class", "view")
+                .attr("x", 0.5)
+                .attr("y", 0.5)
+                .attr("width", width - 1)
+                .attr("height", height - 1)
+                .attr("fill", "grey")
+                .attr("opacity", "0.2")
+                .attr("stroke","#000");
+
+            function zoomed() {
+                view.attr("transform", d3.event.transform);
+                gX.call(xAxis.scale(d3.event.transform.rescaleX(xscale)));
+                gY.call(yAxis.scale(d3.event.transform.rescaleY(yscale)));
+            }
+
+            d3.select("button")
+                .on("click", resetted);
+
+            function resetted() {
+                svg.transition()
+                    .duration(750)
+                    .call(zoom.transform, d3.zoomIdentity);
+            }
+
+            svg.call(zoom);*/
+        }
+
+
+        function create_controls(node) {
+            var dim_names = [];
+            for (var i = 0; i < nb_var; i++) {
+                dim_names.push("x" + i);
+            }
+            console.log(dim_names.toString());
+            var selX = node.append('select')
+                .attr("id", "selX")
+                .attr('class', 'select')
+                .on('change', onchangeX);
+            selX.selectAll("option")
+                .data(dim_names).enter()
+                .append('option')
+                .property('selected', function(d) {
+                    return d === "x0";
+                })
+                .text(function(d) {
+                    return d;
+                })
+            var selY = node.append('select')
+                .attr("id", "selY")
+                .attr('class', 'select')
+                .on('change', onchangeY);
+            selY.selectAll("option")
+                .data(dim_names).enter()
+                .append('option')
+                .property('selected', function(d) {
+                    return d === "x1";
+                })
+                .text(function(d) {
+                    return d;
+                });
+            var selStatus = node.append('select')
+                .attr("id", "selStatus")
+                .attr('class', 'select')
+                .on('change', onchangeStatus);
+            selStatus.selectAll("option")
+                .data(status_names).enter()
+                .append('option')
+                .property('selected', function(d) {
+                    return d === "Inner";
+                })
+                .text(function(d) {
+                    return d;
+                });
+
+            function onchangeX() {
+                var selectValue = d3.select('#selX').property('value');
+                curXDim = parseInt(selectValue.substring(1));
+                //var exp = d3.select("#explorer");
+                d3.select("#manifold").remove();
+                update_svg(d3.select("#plot_0"));
+            };
+
+            function onchangeY() {
+                var selectValue = d3.select('#selY').property('value');
+                curYDim = parseInt(selectValue.substring(1));
+                //var exp = d3.select("#explorer");
+                d3.select("#manifold").remove();
+                update_svg(d3.select("#plot_0"));
+            };
+
+            function onchangeStatus() {
+                var selectValue = d3.select('#selStatus').property('value');
+                if (selectValue === "All") {
+                    filter_sol.filterAll();
+                } else {
+                    filter_sol.filterFunction((d) => {
+                        return d.status === status_codes[selectValue];
+                    });
+                }
+                plotted_sols = filter_sol.top(Infinity);
+                //console.log("sols: " + JSON.stringify(plotted_sols));
+                d3.select("#info").html(plotted_sols.length + " solutions displayed");
+                //var exp = d3.select("#explorer");
+                d3.select("#manifold").remove();
+                update_svg(d3.select("#plot_0"));
+            };
+        }
+
+
+        // Function that handle the manifold file drop
+        function drop_handler(ev) {
+            ev.preventDefault();
+            console.log("Drop");
+            // If dropped items aren't files, reject them
+            var dt = ev.dataTransfer;
+            if (dt.items) {
+                // Use DataTransferItemList interface to access the file(s)
+                for (var i = 0; i < dt.items.length; i++) {
+                    if (dt.items[i].kind == "file") {
+                        // Remove previous elements if a drawing exists
+                        d3.select("#explorer").selectAll("svg").remove();
+                        d3.select("#explorer").selectAll("select").remove();
+
+                        // Process the ith file, normally only 1 file to process
+                        var f = dt.items[i].getAsFile();
+                        //console.log("... file[" + i + "].name = " + f.name);
+                        var reader = new FileReader();
+
+                        // Function called after data loading achieved
+                        reader.onloadend = function() {
+                            //console.log(reader.result);
+                            parse_data(reader.result);
+
+                            // Initialize crossfilter with read solutions
+                            cf = crossfilter(sols);
+
+                            // create filter on status
+                            //filter_by_status = cf.dimension(function(d) {
+                            //    return d.status
+                            //});
+                            // Inner solutions by default
+                            //filter_by_status.filterExact(0);
+
+                            // create filter for brush
+                            filter_sol = cf.dimension(function(d) {
+                                var d_ = new Object();
+                                d_.lowers = d.lowers;
+                                d_.uppers = d.uppers;
+                                d_.status = d.status;
+                                return d_;
+                            });
+                            filter_sol.filterFunction((d => {
+                                console.log(JSON.stringify(d));
+                                console.log(d.status + "===" + 0 + " ? " + d.status == 0);
+                                return d.status == 0;
+                            }));
+                            plotted_sols = filter_sol.top(Infinity);
+                            console.log(plotted_sols.length + " filtered solutions");
+                            //print_filter(filter_by_status);
+
+                            create_controls(d3.select("#control"));
+
+                            create_svg(d3.select("#explorer"));
+                        }
+
+                        reader.readAsArrayBuffer(f); //readAsBinaryString(f);
+                    }
+                }
+            } else {
+                // Use DataTransfer interface to access the file(s)
+                for (var i = 0; i < dt.files.length; i++) {
+                    console.log("... file[" + i + "].name = " + dt.files[i].name);
+                }
+            }
+        }
+
+        function dragover_handler(ev) {
+            //console.log("dragOver");
+            // Prevent default select and drag behavior
+            ev.preventDefault();
+        }
+
+        function dragend_handler(ev) {
+            //console.log("dragEnd");
+            // Remove all of the drag data
+            var dt = ev.dataTransfer;
+            if (dt.items) {
+                // Use DataTransferItemList interface to remove the drag data
+                for (var i = 0; i < dt.items.length; i++) {
+                    dt.items.remove(i);
+                }
+            } else {
+                // Use DataTransfer interface to remove the drag data
+                ev.dataTransfer.clearData();
+            }
+        }
+
+    </script>
+</body>
+
+</html>
