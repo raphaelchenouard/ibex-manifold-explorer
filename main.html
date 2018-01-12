@@ -22,8 +22,8 @@
     <div id="explorer">
         <div id="control"></div>
         <div id="info"></div>
-        <div id="detail"></div>
     </div>
+    <div id="detail"></div>
     <div id="selection">
         <div id="info_selection"></div>
         <div id="detail_selection"></div>
@@ -35,10 +35,10 @@
         var mins = []; // min value for each dimension
         var maxs = []; // max value for each dimension
 
-        var nb_var = 0; // number of dimension
+        var nb_var = 0; // number of dimensions
         var cf; // crossfilter object
         var filter_by_status = []; // crossfilter dimension filtering on status
-        var filter_sol = []; // crossfilter dimension used to filter solutions
+        var filter_sol = []; // crossfilter dimension used to filter solutions on their bounds
         var plotted_sols = []; // plotted solutions after filtering
 
         var width, height, margin;
@@ -47,13 +47,13 @@
         var xAxis, yAxis; // d3 axis
         var gX, gY; // svg g tag embedding axis
 
-        var brush, focus;
+        var brush, focus; // d3 brush for selection of boxes and d3 focus to highlight mouseover boxes
 
         var curXDim = 0; // current X dimension
         var curYDim = 1; // current Y dimension
 
         var status_names = ["Inner", "Boundary", "Unkown", "Pending", "All"];
-        var status_codes = {};
+        var status_codes = {}; // dictionary of status names and codes
         for (var i = 0; i < status_names.length; i++) {
             status_codes[status_names[i]] = i;
         }
@@ -89,61 +89,92 @@
             console.log(filter + "(" + f.length + ") = " + JSON.stringify(f).replace("[", "[\n\t").replace(/}\,/g, "},\n\t").replace("]", "\n]"));
         }
 
-        // generate solutions from a buffer, ie. binary mnf
+        // generate solutions from a buffer, ie. a binary mnf file
         function parse_data(buffer) {
             try {
+                // initialize solutions data arrays
                 sols = [];
                 mins = [];
                 maxs = [];
+                // use standard js TextDecoder to process binary data
                 var dec = new TextDecoder();
+                // The file starts with a signature on 20 bytes which should look like: IBEX MANIFOLD FILE  2
+                // 2 is a number corresponding to the current version of this format
+                // start to read the 19 first bytes
                 const signature = dec.decode(buffer.slice(0, 19));
-                console.log();
+                // use of standard js DataView to convert bytes to numbers (float or integer) or strings
+                // we start the view to byte 20 to avoid considering the 19 first bytes
                 const view = new DataView(buffer.slice(20));
+                // initialization of current cursor in the view
                 var cursor = 0;
+                // read the current version of the format
                 const ver = view.getUint32(cursor, true);
+                // Uint32 are stored on 4 bytes
                 cursor += 4;
                 console.log(signature + ver);
 
+                // read the number of dimensions (ie. variables) of the manifold
                 nb_var = view.getUint32(cursor, true);
                 cursor += 4;
+
+                // read the number of equations in the problem from which this manifold come from
                 const nb_eq = view.getUint32(cursor, true);
                 cursor += 4;
+                // read the number of inequations in the problem from which this manifold come from
                 const nb_ineq = view.getUint32(cursor, true);
                 cursor += 4;
                 console.log(nb_var + " variables, " + nb_eq + " equalities and " + nb_ineq + " inequalities");
 
+                // read the solving status that ended with this manifold (see ibex doc for that)
                 const result_status = view.getUint32(cursor, true);
                 cursor += 4;
                 console.log("Result status: " + result_status);
 
+                // read the number of inner boxes
                 const nb_inner = view.getUint32(cursor, true);
                 cursor += 4;
+                // read the number of boundary boxes
                 const nb_boundary = view.getUint32(cursor, true);
                 cursor += 4;
+                // read the number of unknown boxes
                 const nb_unknown = view.getUint32(cursor, true);
                 cursor += 4;
+                // read the number of pending boxes
                 const nb_pending = view.getUint32(cursor, true);
                 cursor += 4;
                 console.log("inner: " + nb_inner + ", boundary: " + nb_boundary + ", unknown: " + nb_unknown + ", pending: " + nb_pending);
+
+                // read the solving time
                 const solving_time = view.getFloat64(cursor, true);
+                // Float64 (double) are stored on 8 bytes
                 cursor += 8;
+                // Number of cells used to perform the solving process
                 const nb_cells = view.getUint32(cursor, true);
                 cursor += 4;
                 console.log("Solving time: " + solving_time + "s, number of cells: " + nb_cells);
 
+                // read all the solutions
                 for (var i = 0; i < nb_inner + nb_pending + nb_unknown + nb_boundary; i++) {
+                    // create a new object to manipulate solutions
                     var sol = new Object();
+                    // storing lower and upper bound separately
                     sol.lowers = [];
                     sol.uppers = [];
+                    // storing the width of each interval
                     sol.width = [];
+                    // read all dimension values
                     for (var j = 0; j < nb_var; j++) {
+                        // read the lower bound
                         var low = view.getFloat64(cursor, true);
                         cursor += 8;
+                        // read the upper bound
                         var up = view.getFloat64(cursor, true);
                         cursor += 8;
                         sol.lowers.push(low);
                         sol.uppers.push(up);
+                        // compute the width
                         sol.width.push(up - low);
+                        // search for the min and max values for each dimension
                         if (i == 0) {
                             mins.push(low);
                             maxs.push(up);
@@ -156,12 +187,19 @@
                             }
                         }
                     }
+                    // read the solution status: 0=inner, 1=boundary, 2=unknown, 3=pending
                     sol.status = view.getUint32(cursor, true);
                     cursor += 4;
-                    var nb_proof = view.getUint32(cursor, true); // unused data: number of constants values to achieve proof of solution
+                    // read data about the number of constants values to achieve proof of solution
+                    var nb_proof = view.getUint32(cursor, true); // unused 
                     cursor += 4;
-                    //console.log(sol);
-                    sols.push(sol);
+
+                    if (sol.status > 4 || sol.status < 0) {
+                        console.log("ERROR: Wrong status(" + sol.status + ") for current solution(" + i + "): " + sol2string(sol));
+                    } else {
+                        // adding current solution to the list of all solutions used in further steps
+                        sols.push(sol);
+                    }
                 }
                 console.log(sols.length + " solutions read!");
             } catch (err) {
@@ -172,7 +210,7 @@
 
 
         // update the drawing after an event or change in data
-        function update_svg(svg,color = "green") {
+        function update_svg(svg, m_id = "manifold", color = "green") {
 
             // Define scale domain relating to current dimensions
             xscale.domain([mins[curXDim], maxs[curXDim]]);
@@ -185,47 +223,48 @@
             d3.select("#legend_x").text("x" + curXDim);
             d3.select("#legend_y").text("x" + curYDim);
 
-            // Update ratio
+            // Update ratio to compute width and height of rectangles
             var xratio = width / (maxs[curXDim] - mins[curXDim]);
             var yratio = height / (maxs[curYDim] - mins[curYDim]);
 
             //svg.append('g')
             //    .attr('transform', "translate(" + margin.left + "," + margin.top + ")");
             //console.log(JSON.stringify(plotted_sols));
-            console.log("plotting (" + plotted_sols.length + ") ...");
-            // Add data
+
+            // Add data as a sub graphic composed of rectangles
             svg.append('g')
-                .attr("id", "manifold")
-                .attr('transform', "translate(" + margin.left + "," + margin.top + ")")
+                .attr("id", m_id)
+                .attr('transform', "translate(" + margin.left + "," + margin.top + ")") // translate considering the impact of axis
                 .selectAll("rect").data(plotted_sols).enter().append("rect")
-                //for (var i=0;i<plotted_sols.length;i++){ var sol = plotted_sols[i];
-                //svg.append("rect").datum(sol)
-                .attr("x", (sol) => {
-                    console.log(JSON.stringify(sol));
+                .attr("x", (sol) => { // set the upper left corner x coordinate
+                    //console.log(JSON.stringify(sol));
                     return xscale(sol.lowers[curXDim])
                 })
-                .attr("y", (sol) => {
+                .attr("y", (sol) => { // set the upper left corner y coordinate
                     return yscale(sol.uppers[curYDim])
                 })
                 .attr("class", "box")
-                .attr("width", (sol) => {
+                .attr("width", (sol) => { // set ther width of rectangle
                     return xratio * sol.width[curXDim]
                 })
-                .attr("height", (sol) => {
+                .attr("height", (sol) => { // set the height
                     return yratio * sol.width[curYDim]
                 })
-                .attr("fill", color).attr("opacity", 0.2)
-                .on("mouseover", function(d) {
-                    //Get this bar's x/y values, then augment for the tooltip
+                .attr("fill", color).attr("opacity", 0.2) // fill the rectangle with a given color
+                .on("mouseover", function(d) { // add the function to call when mouse goes over
+                    //Get the rectangle x/y values
                     var xPos = parseFloat(d3.select(this).attr("x"));
                     var yPos = parseFloat(d3.select(this).attr("y"));
                     //console.log(sol2string(d));
+                    // show the solution details
                     d3.select("#detail").html("Solution detail (status=" + d.status + "): " + printsol(d));
+                    // change the color of rectangle
                     d3.select(this)
                         .attr("fill", "orange")
                         .transition()
                         .duration(250);
 
+                    // update coordinates of dashed lines to project focused box on each axis
                     focus.select('line.x1')
                         .attr('x1', xscale(d.lowers[curXDim]))
                         .attr('x2', xscale(d.lowers[curXDim]))
@@ -236,7 +275,6 @@
                         .attr('x2', xscale(d.uppers[curXDim]))
                         .attr('y1', yscale(d.lowers[curYDim]))
                         .attr('y2', height);
-
                     focus.select('line.y1')
                         .attr('x1', 0)
                         .attr('x2', xscale(d.lowers[curXDim]))
@@ -249,24 +287,45 @@
                         .attr('y2', yscale(d.uppers[curYDim]));
                     focus.style('display', null);
                 })
-                .on("mouseout", function() {
+                .on("mouseout", function() { // add the function to call when mouse goes out the rectangle
+                    // set the initial color
                     d3.select(this)
                         .transition()
                         .duration(250)
                         .attr("fill", color);
-                    //Remove the tooltip
-                    //d3.select("#tooltip").remove();
+                    // hide dashed lines
                     focus.style('display', 'none');
+                    d3.select("#detail").html("");
                 });
-            //}
 
+            // show global information about the manifold and plotted solutions
             d3.select("#info").html(plotted_sols.length + " solutions displayed");
 
+        }
+
+        function erase_manifold(plot = "plot_0") {
+            d3.select("#manifold").remove();
+        }
+
+        function reset_selection() {
+            console.log("Resetting selection...");
+            filter_sol.filterAll();
+            plotted_sols = filter_sol.top(Infinity);
+            erase_manifold();
+            update_svg(d3.select("#plot_0"));
+            //d3.selectAll("g.selection").remove();
+            erase_selection();
+            d3.select('#info_selection').html("");
+        }
+
+        function erase_selection() {
+            d3.select("#g_selection").remove();
         }
 
 
         // Create the initial drawing with default values
         function create_svg(node, w = 800, h = 600, marg = null) {
+            // Define margins for the graphic to place axis
             if (marg == null) {
                 margin = {
                     top: 20,
@@ -279,6 +338,7 @@
             }
             width = w - margin.left - margin.right,
                 height = h - margin.top - margin.bottom;
+            // create new svg node to store the graphic
             var svg = node.append("svg")
                 .attr('xmlns:xlink', 'http://www.w3.org/1999/xlink')
                 .attr('width', w)
@@ -319,15 +379,21 @@
                 .style("text-anchor", "middle")
                 .text("x" + curYDim);
 
-
+            // Generate date inside the graphic
             update_svg(d3.select("#plot_0"));
 
             // Add brush selection
             brush = d3.brush()
+                .extent([
+                    [0, 0],
+                    [width, height]
+                ])
                 .on("end", brushed);
 
             function brushed() {
+                if (!d3.event.sourceEvent) return; // Only transition after input.
                 if (d3.event.selection != null) {
+                    reset_selection();
                     var selection = d3.event.selection;
                     //console.log("brush: " + JSON.stringify(selection));
                     var x1 = Math.min(xscale.invert(selection[0][0]), xscale.invert(selection[1][0]));
@@ -341,10 +407,18 @@
                         //console.log(JSON.stringify(d));
                         return d.lowers[curXDim] >= x1 && d.uppers[curXDim] <= x2 && d.lowers[curYDim] >= y1 && d.uppers[curYDim] <= y2;
                     });
+
+                    //d3.select("#manifold").remove();
                     //var selected = filter_sol.top(Infinity);
                     //svg.selectAll("rect").data(selected).enter().attr("fill", "red");
                     plotted_sols = filter_sol.top(Infinity);
-                    update_svg(d3.select("#plot_0"));
+                    var node = d3.select("#plot_0");
+                    // Add red boxes for the selection
+                    update_svg(d3.select("#plot_0"), "g_selection", "red");
+                    // Erase the grey box drawn by brush when selecting
+                    d3.selectAll(".brush").call(brush.move, null);
+
+                    var info = d3.select('#info_selection').html("Active selection with "+plotted_sols.length + " solution(s) being selected!");
                 }
             }
 
@@ -411,12 +485,15 @@
         }
 
 
+        // Add inputs to update the graphic
         function create_controls(node) {
+            // Since manifold format does not contains names for dimensions, define some generic ones
             var dim_names = [];
             for (var i = 0; i < nb_var; i++) {
                 dim_names.push("x" + i);
             }
-            console.log(dim_names.toString());
+            //console.log(dim_names.toString());
+            // Add a list selection for dimension of x axis
             var selX = node.append('select')
                 .attr("id", "selX")
                 .attr('class', 'select')
@@ -430,6 +507,7 @@
                 .text(function(d) {
                     return d;
                 })
+            // Add a list selection for dimension of y axis
             var selY = node.append('select')
                 .attr("id", "selY")
                 .attr('class', 'select')
@@ -443,6 +521,8 @@
                 .text(function(d) {
                     return d;
                 });
+
+            // Add a list selection for the status of solutions to plot
             var selStatus = node.append('select')
                 .attr("id", "selStatus")
                 .attr('class', 'select')
@@ -457,36 +537,62 @@
                     return d;
                 });
 
+            var resSel = node.append('input')
+                .attr('id', 'resBtn')
+                .attr('value', 'Reset selection')
+                .attr('type', 'button')
+                .on('click', reset_selection);
+
+
+            // function called when dimension for x axis change
             function onchangeX() {
                 var selectValue = d3.select('#selX').property('value');
+                // get the number corresponding to the selection
                 curXDim = parseInt(selectValue.substring(1));
-                //var exp = d3.select("#explorer");
-                d3.select("#manifold").remove();
+                // clean current graphic
+                erase_manifold();
+                //d3.select("#manifold").remove();
+                erase_selection();
+                // add new data relating to new selected dimension
                 update_svg(d3.select("#plot_0"));
             };
 
+            // function called when dimension for y axis change
             function onchangeY() {
                 var selectValue = d3.select('#selY').property('value');
+                // get the number corresponding to the selection
                 curYDim = parseInt(selectValue.substring(1));
-                //var exp = d3.select("#explorer");
-                d3.select("#manifold").remove();
+                // clean current graphic
+                erase_manifold();
+                //d3.select("#manifold").remove();
+                erase_selection();
+                // add new data relating to new selected dimension
                 update_svg(d3.select("#plot_0"));
             };
 
+            // function called when status change
             function onchangeStatus() {
                 var selectValue = d3.select('#selStatus').property('value');
                 if (selectValue === "All") {
-                    filter_sol.filterAll();
+                    // remove current filter from selected solutions
+                    filter_by_status.filterAll();
                 } else {
-                    filter_sol.filterFunction((d) => {
-                        return d.status === status_codes[selectValue];
-                    });
+                    // filter solutions on selected status
+                    /*filter_by_status.filterFunction((d) => {
+                        console.log("Current status: "+d);
+                        return d === status_codes[selectValue];
+                    });*/
+                    filter_by_status.filterExact(status_codes[selectValue]);
                 }
-                plotted_sols = filter_sol.top(Infinity);
+                // update the set of solution to plot
+                plotted_sols = filter_by_status.top(Infinity);
                 //console.log("sols: " + JSON.stringify(plotted_sols));
                 d3.select("#info").html(plotted_sols.length + " solutions displayed");
-                //var exp = d3.select("#explorer");
-                d3.select("#manifold").remove();
+                // clean current graphic
+                erase_manifold();
+                //d3.select("#manifold").remove();
+                erase_selection();
+                // add new data relating to new selected status
                 update_svg(d3.select("#plot_0"));
             };
         }
@@ -519,36 +625,29 @@
                             // Initialize crossfilter with read solutions
                             cf = crossfilter(sols);
 
-                            // create filter on status
-                            //filter_by_status = cf.dimension(function(d) {
-                            //    return d.status
-                            //});
-                            // Inner solutions by default
-                            //filter_by_status.filterExact(0);
-
-                            // create filter for brush
+                            // create filters
                             filter_sol = cf.dimension(function(d) {
-                                var d_ = new Object();
+                                /*var d_ = new Object();
                                 d_.lowers = d.lowers;
                                 d_.uppers = d.uppers;
                                 d_.status = d.status;
-                                return d_;
+                                return d_;*/
+                                return d;
                             });
-                            filter_sol.filterFunction((d => {
-                                console.log(JSON.stringify(d));
-                                console.log(d.status + "===" + 0 + " ? " + d.status == 0);
-                                return d.status == 0;
-                            }));
-                            plotted_sols = filter_sol.top(Infinity);
+                            filter_by_status = cf.dimension(function(d) {
+                                return d.status;
+                            });
+                            // start with inner solutions only
+                            filter_by_status.filterExact(0);
+                            plotted_sols = filter_by_status.top(Infinity);
                             console.log(plotted_sols.length + " filtered solutions");
-                            //print_filter(filter_by_status);
 
                             create_controls(d3.select("#control"));
 
                             create_svg(d3.select("#explorer"));
                         }
 
-                        reader.readAsArrayBuffer(f); //readAsBinaryString(f);
+                        reader.readAsArrayBuffer(f);
                     }
                 }
             } else {
