@@ -11,10 +11,12 @@ Supported version of manifold format is: 2
 
 - install nodejs for your platform
 - put main.js and main html in the same directory
-- in this directory launch this command:
+- in this directory run this command:
 
 ~~~bash
 node main.js
 ~~~
 
 You should be able to access it using a web browser. Default port is 8080, but it can be easily changed in main.js.
+
+If you run it locally, you just have to browse http://localhost:8080, but you can run it on a remote server, thus replace localhost by your server ip and check that port 8080 is not blocked.
