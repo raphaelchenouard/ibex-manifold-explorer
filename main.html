@@ -190,9 +190,19 @@
                     // read the solution status: 0=inner, 1=boundary, 2=unknown, 3=pending
                     sol.status = view.getUint32(cursor, true);
                     cursor += 4;
+
                     // read data about the number of constants values to achieve proof of solution
-                    var nb_proof = view.getUint32(cursor, true); // unused 
-                    cursor += 4;
+                    //var nb_proof = view.getUint32(cursor, true); // unused 
+                    //cursor += 4;
+
+                    var nb_proof = Math.max(nb_var - nb_eq, 0);
+                    if (nb_proof > 0) {
+                        for (var k = 0; k < nb_proof; k++) {
+                            view.getUint32(cursor, true); // unused
+                            cursor += 4;
+                        }
+
+                    }
 
                     if (sol.status > 4 || sol.status < 0) {
                         console.log("ERROR: Wrong status(" + sol.status + ") for current solution(" + i + "): " + sol2string(sol));
@@ -418,7 +428,7 @@
                     // Erase the grey box drawn by brush when selecting
                     d3.selectAll(".brush").call(brush.move, null);
 
-                    var info = d3.select('#info_selection').html("Active selection with "+plotted_sols.length + " solution(s) being selected!");
+                    var info = d3.select('#info_selection').html("Active selection with " + plotted_sols.length + " solution(s) being selected!");
                 }
             }
 
