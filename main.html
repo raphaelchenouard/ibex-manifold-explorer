@@ -225,7 +225,11 @@
             // Define scale domain relating to current dimensions
             xscale.domain([mins[curXDim], maxs[curXDim]]);
             yscale.domain([mins[curYDim], maxs[curYDim]]);
-
+            // Initialize axis objects left and bottom
+            xAxis = d3.axisBottom(xscale).ticks(10);
+            yAxis = d3.axisLeft(yscale).ticks(10);
+            gX.call(xAxis);
+            gY.call(yAxis);
             console.log("x in [" + mins[curXDim] + "," + maxs[curXDim] + "] - " + (maxs[curXDim] - mins[curXDim]));
             console.log("y in [" + mins[curYDim] + "," + maxs[curYDim] + "] - " + (maxs[curYDim] - mins[curYDim]));
 
@@ -369,7 +373,7 @@
                 .attr("transform", "translate(" + 0 + "," + height + ")")
                 .call(xAxis);
             // Add the y Axis
-            var gY = svg.append("g")
+            gY = svg.append("g")
                 //.attr("transform", "translate(" + margin.left + "," + 0 + ")")
                 .call(yAxis);
             // text label for the x axis
