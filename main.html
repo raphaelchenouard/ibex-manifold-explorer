@@ -57,6 +57,7 @@
         for (var i = 0; i < status_names.length; i++) {
             status_codes[status_names[i]] = i;
         }
+        var status_color= ["green","yellow","grey","lightgrey"];
 
         // Generate a string with all values
         sol2string = (sol) => {
@@ -192,7 +193,7 @@
                     cursor += 4;
 
                     // read data about the number of constants values to achieve proof of solution
-                    //var nb_proof = view.getUint32(cursor, true); // unused 
+                    //var nb_proof = view.getUint32(cursor, true); // unused
                     //cursor += 4;
 
                     var nb_proof = Math.max(nb_var - nb_eq, 0);
@@ -220,7 +221,7 @@
 
 
         // update the drawing after an event or change in data
-        function update_svg(svg, m_id = "manifold", color = "green") {
+        function update_svg(svg, m_id = "manifold", color = null) {
 
             // Define scale domain relating to current dimensions
             xscale.domain([mins[curXDim], maxs[curXDim]]);
@@ -244,14 +245,18 @@
             //svg.append('g')
             //    .attr('transform', "translate(" + margin.left + "," + margin.top + ")");
             //console.log(JSON.stringify(plotted_sols));
-
+            /*var c="green";
+            if (color != null) {
+              console.log("use color: "+color);
+              c = color;
+            }*/
             // Add data as a sub graphic composed of rectangles
             svg.append('g')
                 .attr("id", m_id)
                 .attr('transform', "translate(" + margin.left + "," + margin.top + ")") // translate considering the impact of axis
                 .selectAll("rect").data(plotted_sols).enter().append("rect")
                 .attr("x", (sol) => { // set the upper left corner x coordinate
-                    //console.log(JSON.stringify(sol));
+                    console.log(JSON.stringify(sol));
                     return xscale(sol.lowers[curXDim])
                 })
                 .attr("y", (sol) => { // set the upper left corner y coordinate
@@ -264,7 +269,7 @@
                 .attr("height", (sol) => { // set the height
                     return yratio * sol.width[curYDim]
                 })
-                .attr("fill", color).attr("opacity", 0.2) // fill the rectangle with a given color
+                .attr("fill", (sol) => {return color!=null ? color : status_color[sol.status]}).attr("opacity", 0.2) // fill the rectangle with a given color
                 .on("mouseover", function(d) { // add the function to call when mouse goes over
                     //Get the rectangle x/y values
                     var xPos = parseFloat(d3.select(this).attr("x"));
@@ -306,7 +311,7 @@
                     d3.select(this)
                         .transition()
                         .duration(250)
-                        .attr("fill", color);
+                        .attr("fill", (sol) => {return color!=null ? color : status_color[sol.status]});
                     // hide dashed lines
                     focus.style('display', 'none');
                     d3.select("#detail").html("");
@@ -625,6 +630,7 @@
                         // Remove previous elements if a drawing exists
                         d3.select("#explorer").selectAll("svg").remove();
                         d3.select("#explorer").selectAll("select").remove();
+                        d3.select("#explorer").selectAll("input").remove();
 
                         // Process the ith file, normally only 1 file to process
                         var f = dt.items[i].getAsFile();
