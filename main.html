@@ -11,6 +11,12 @@
             margin: 10px;
         }
 
+        .zoom {
+            cursor: move;
+            fill: none;
+            pointer-events: all;
+        }
+
     </style>
 </head>
 
@@ -43,6 +49,7 @@
 
         var width, height, margin;
         var xscale, yscale; // d3 scale objects
+        var x_dom,y_dom; // current domain for each dimension
         var xratio, yratio; // ratio for scaling width of interval
         var xAxis, yAxis; // d3 axis
         var gX, gY; // svg g tag embedding axis
@@ -57,7 +64,7 @@
         for (var i = 0; i < status_names.length; i++) {
             status_codes[status_names[i]] = i;
         }
-        var status_color= ["green","yellow","grey","lightgrey"];
+        var status_color = ["green", "yellow", "grey", "lightgrey"]; // colors use to fill boxes depending on their status code
 
         // Generate a string with all values
         sol2string = (sol) => {
@@ -87,7 +94,7 @@
                     return "";
                 }).top(Infinity);
             } else {}
-            console.log(filter + "(" + f.length + ") = " + JSON.stringify(f).replace("[", "[\n\t").replace(/}\,/g, "},\n\t").replace("]", "\n]"));
+            //console.log(filter + "(" + f.length + ") = " + JSON.stringify(f).replace("[", "[\n\t").replace(/}\,/g, "},\n\t").replace("]", "\n]"));
         }
 
         // generate solutions from a buffer, ie. a binary mnf file
@@ -224,8 +231,8 @@
         function update_svg(svg, m_id = "manifold", color = null) {
 
             // Define scale domain relating to current dimensions
-            xscale.domain([mins[curXDim], maxs[curXDim]]);
-            yscale.domain([mins[curYDim], maxs[curYDim]]);
+            xscale.domain(x_dom);
+            yscale.domain(y_dom);
             // Initialize axis objects left and bottom
             xAxis = d3.axisBottom(xscale).ticks(10);
             yAxis = d3.axisLeft(yscale).ticks(10);
@@ -239,24 +246,15 @@
             d3.select("#legend_y").text("x" + curYDim);
 
             // Update ratio to compute width and height of rectangles
-            var xratio = width / (maxs[curXDim] - mins[curXDim]);
-            var yratio = height / (maxs[curYDim] - mins[curYDim]);
-
-            //svg.append('g')
-            //    .attr('transform', "translate(" + margin.left + "," + margin.top + ")");
-            //console.log(JSON.stringify(plotted_sols));
-            /*var c="green";
-            if (color != null) {
-              console.log("use color: "+color);
-              c = color;
-            }*/
+            xratio = width/(x_dom[1]-x_dom[0]);
+            yratio = height/(y_dom[1]-y_dom[0]);
+            
             // Add data as a sub graphic composed of rectangles
             svg.append('g')
                 .attr("id", m_id)
                 .attr('transform', "translate(" + margin.left + "," + margin.top + ")") // translate considering the impact of axis
                 .selectAll("rect").data(plotted_sols).enter().append("rect")
                 .attr("x", (sol) => { // set the upper left corner x coordinate
-                    console.log(JSON.stringify(sol));
                     return xscale(sol.lowers[curXDim])
                 })
                 .attr("y", (sol) => { // set the upper left corner y coordinate
@@ -269,12 +267,13 @@
                 .attr("height", (sol) => { // set the height
                     return yratio * sol.width[curYDim]
                 })
-                .attr("fill", (sol) => {return color!=null ? color : status_color[sol.status]}).attr("opacity", 0.2) // fill the rectangle with a given color
+                .attr("fill", (sol) => {
+                    return color != null ? color : status_color[sol.status]
+                }).attr("opacity", 0.2) // fill the rectangle with a given color
                 .on("mouseover", function(d) { // add the function to call when mouse goes over
                     //Get the rectangle x/y values
                     var xPos = parseFloat(d3.select(this).attr("x"));
                     var yPos = parseFloat(d3.select(this).attr("y"));
-                    //console.log(sol2string(d));
                     // show the solution details
                     d3.select("#detail").html("Solution detail (status=" + d.status + "): " + printsol(d));
                     // change the color of rectangle
@@ -311,7 +310,9 @@
                     d3.select(this)
                         .transition()
                         .duration(250)
-                        .attr("fill", (sol) => {return color!=null ? color : status_color[sol.status]});
+                        .attr("fill", (sol) => {
+                            return color != null ? color : status_color[sol.status]
+                        });
                     // hide dashed lines
                     focus.style('display', 'none');
                     d3.select("#detail").html("");
@@ -322,8 +323,9 @@
 
         }
 
-        function erase_manifold(plot = "plot_0") {
-            d3.select("#manifold").remove();
+        function erase_manifold(plot = "#plot_0") {
+            //svg.selectAll("#"+m_id).remove();
+            d3.select(plot).selectAll("#manifold").remove();
         }
 
         function reset_selection() {
@@ -331,14 +333,9 @@
             filter_sol.filterAll();
             plotted_sols = filter_sol.top(Infinity);
             erase_manifold();
+            x_dom = [mins[curXDim],maxs[curXDim]];
+            y_dom = [mins[curYDim],maxs[curYDim]];
             update_svg(d3.select("#plot_0"));
-            //d3.selectAll("g.selection").remove();
-            erase_selection();
-            d3.select('#info_selection').html("");
-        }
-
-        function erase_selection() {
-            d3.select("#g_selection").remove();
         }
 
 
@@ -355,8 +352,8 @@
             } else {
                 margin = marg;
             }
-            width = w - margin.left - margin.right,
-                height = h - margin.top - margin.bottom;
+            width = w - margin.left - margin.right;
+            height = h - margin.top - margin.bottom;
             // create new svg node to store the graphic
             var svg = node.append("svg")
                 .attr('xmlns:xlink', 'http://www.w3.org/1999/xlink')
@@ -369,7 +366,10 @@
             // Initialize scale objects
             xscale = d3.scaleLinear().range([-1, width + 1]);
             yscale = d3.scaleLinear().range([height + 1, -1]);
-
+            // Initial current domain to min and max  of each dimension
+            x_dom = [mins[curXDim], maxs[curXDim]];
+            y_dom = [mins[curYDim], maxs[curYDim]];
+            
             // Initialize axis objects left and bottom
             xAxis = d3.axisBottom(xscale).ticks(10);
             yAxis = d3.axisLeft(yscale).ticks(10);
@@ -379,7 +379,6 @@
                 .call(xAxis);
             // Add the y Axis
             gY = svg.append("g")
-                //.attr("transform", "translate(" + margin.left + "," + 0 + ")")
                 .call(yAxis);
             // text label for the x axis
             svg.append("text")
@@ -412,32 +411,27 @@
             function brushed() {
                 if (!d3.event.sourceEvent) return; // Only transition after input.
                 if (d3.event.selection != null) {
-                    reset_selection();
                     var selection = d3.event.selection;
-                    //console.log("brush: " + JSON.stringify(selection));
                     var x1 = Math.min(xscale.invert(selection[0][0]), xscale.invert(selection[1][0]));
                     var x2 = Math.max(xscale.invert(selection[0][0]), xscale.invert(selection[1][0]));
                     var y1 = Math.min(yscale.invert(selection[0][1]), yscale.invert(selection[1][1]));
                     var y2 = Math.max(yscale.invert(selection[0][1]), yscale.invert(selection[1][1]));
 
-                    //console.log("Brush from (" + x1 + "x" + y1 + ") to (" + x2 + "x" + y2 + ")");
-
                     filter_sol.filterFunction(function(d) {
-                        //console.log(JSON.stringify(d));
                         return d.lowers[curXDim] >= x1 && d.uppers[curXDim] <= x2 && d.lowers[curYDim] >= y1 && d.uppers[curYDim] <= y2;
                     });
 
-                    //d3.select("#manifold").remove();
-                    //var selected = filter_sol.top(Infinity);
-                    //svg.selectAll("rect").data(selected).enter().attr("fill", "red");
                     plotted_sols = filter_sol.top(Infinity);
-                    var node = d3.select("#plot_0");
+                    
+                    x_dom = [x1,x2];
+                    y_dom = [y1,y2];
+                    erase_manifold();
                     // Add red boxes for the selection
-                    update_svg(d3.select("#plot_0"), "g_selection", "red");
+                    update_svg(d3.select("#plot_0"));
                     // Erase the grey box drawn by brush when selecting
                     d3.selectAll(".brush").call(brush.move, null);
 
-                    var info = d3.select('#info_selection').html("Active selection with " + plotted_sols.length + " solution(s) being selected!");
+                    var info = d3.select('#info_selection').html(plotted_sols.length + " selected solution(s) within: ["+x1+","+x2+"]x["+y1+","+y2+"]");
                 }
             }
 
@@ -466,41 +460,6 @@
                 .style('stroke-width', '1.5px')
                 .style('stroke-dasharray', '3 3')
                 .style('opacity', 0.7);
-
-            /*var zoom = d3.zoom()
-                .scaleExtent([1, 10])
-                .translateExtent([
-                    [-100, -100],
-                    [width + 90, height + 100]
-                ])
-                .on("zoom", zoomed);*/
-
-            /*var view = svg.append("rect")
-                .attr("class", "view")
-                .attr("x", 0.5)
-                .attr("y", 0.5)
-                .attr("width", width - 1)
-                .attr("height", height - 1)
-                .attr("fill", "grey")
-                .attr("opacity", "0.2")
-                .attr("stroke","#000");
-
-            function zoomed() {
-                view.attr("transform", d3.event.transform);
-                gX.call(xAxis.scale(d3.event.transform.rescaleX(xscale)));
-                gY.call(yAxis.scale(d3.event.transform.rescaleY(yscale)));
-            }
-
-            d3.select("button")
-                .on("click", resetted);
-
-            function resetted() {
-                svg.transition()
-                    .duration(750)
-                    .call(zoom.transform, d3.zoomIdentity);
-            }
-
-            svg.call(zoom);*/
         }
 
 
@@ -511,7 +470,6 @@
             for (var i = 0; i < nb_var; i++) {
                 dim_names.push("x" + i);
             }
-            //console.log(dim_names.toString());
             // Add a list selection for dimension of x axis
             var selX = node.append('select')
                 .attr("id", "selX")
@@ -570,8 +528,7 @@
                 curXDim = parseInt(selectValue.substring(1));
                 // clean current graphic
                 erase_manifold();
-                //d3.select("#manifold").remove();
-                erase_selection();
+                reset_selection();
                 // add new data relating to new selected dimension
                 update_svg(d3.select("#plot_0"));
             };
@@ -583,8 +540,7 @@
                 curYDim = parseInt(selectValue.substring(1));
                 // clean current graphic
                 erase_manifold();
-                //d3.select("#manifold").remove();
-                erase_selection();
+                reset_selection();
                 // add new data relating to new selected dimension
                 update_svg(d3.select("#plot_0"));
             };
@@ -597,20 +553,14 @@
                     filter_by_status.filterAll();
                 } else {
                     // filter solutions on selected status
-                    /*filter_by_status.filterFunction((d) => {
-                        console.log("Current status: "+d);
-                        return d === status_codes[selectValue];
-                    });*/
                     filter_by_status.filterExact(status_codes[selectValue]);
                 }
                 // update the set of solution to plot
                 plotted_sols = filter_by_status.top(Infinity);
-                //console.log("sols: " + JSON.stringify(plotted_sols));
                 d3.select("#info").html(plotted_sols.length + " solutions displayed");
                 // clean current graphic
                 erase_manifold();
-                //d3.select("#manifold").remove();
-                erase_selection();
+                reset_selection();
                 // add new data relating to new selected status
                 update_svg(d3.select("#plot_0"));
             };
@@ -634,12 +584,10 @@
 
                         // Process the ith file, normally only 1 file to process
                         var f = dt.items[i].getAsFile();
-                        //console.log("... file[" + i + "].name = " + f.name);
                         var reader = new FileReader();
 
                         // Function called after data loading achieved
                         reader.onloadend = function() {
-                            //console.log(reader.result);
                             parse_data(reader.result);
 
                             // Initialize crossfilter with read solutions
@@ -647,11 +595,6 @@
 
                             // create filters
                             filter_sol = cf.dimension(function(d) {
-                                /*var d_ = new Object();
-                                d_.lowers = d.lowers;
-                                d_.uppers = d.uppers;
-                                d_.status = d.status;
-                                return d_;*/
                                 return d;
                             });
                             filter_by_status = cf.dimension(function(d) {
@@ -679,13 +622,11 @@
         }
 
         function dragover_handler(ev) {
-            //console.log("dragOver");
             // Prevent default select and drag behavior
             ev.preventDefault();
         }
 
         function dragend_handler(ev) {
-            //console.log("dragEnd");
             // Remove all of the drag data
             var dt = ev.dataTransfer;
             if (dt.items) {
