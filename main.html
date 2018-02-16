@@ -227,7 +227,7 @@
                         sols.push(sol);
                     }
                 }
-                console.log(sols.length + " solutions read!");
+                console.log(sols.length + " solutions read using " + cursor + " Bytes!");
                 return 1;
             } catch (err) {
                 console.log(`There was an error: ${err}`);
@@ -789,7 +789,16 @@
             }
 
 
-
+            function downloadURL(data, fileName) {
+                var a;
+                a = document.createElement('a');
+                a.href = data;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.style = 'display: none';
+                a.click();
+                a.remove();
+            };
 
             function export_image() {
                 //get svg element.
@@ -814,15 +823,79 @@
                 var url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(source);
 
                 //set url value to a element's href attribute.
-                var link = d3.select("#info").append("a").attr("href",url).attr("download","plot.svg"); //.html("download image");
+                /*var link = d3.select("#info").append("a").attr("href", url).attr("download", "plot.svg"); //.html("download image");
                 //document.getElementById("link").href = url;
                 //you can download svg file by right click menu.
                 link.node().click();
+                link.remove();*/
+                downloadURL(url, "plot.svg")
             }
 
             function export_manifold() {
-                // TODO
-                console.log("TODO");
+                var sig_str = "IBEX MANIFOLD FILE ";
+                var n_int = 11 + plotted_sols.length;
+                var n_dbl = 1 + 2 * plotted_sols.length * plotted_sols[0].lowers.length;
+                var n_bytes = sig_str.length + 4 * n_int + 8 * n_dbl;
+                var buffer = new ArrayBuffer(n_bytes);
+                var view = new DataView(buffer);
+
+                var cursor = 0;
+                for (var i = 0; i < sig_str.length; i++) {
+                    view.setUint8(i, sig_str.charCodeAt(i))
+                }
+                cursor = sig_str.length + 1;
+
+                view.setUint32(cursor, 2 >>> 0, true); // mnf ver
+                cursor += 4;
+                view.setUint32(cursor, plotted_sols[0].lowers.length >>> 0, true); // nb var
+                cursor += 4;
+                view.setUint32(cursor, plotted_sols[0].lowers.length >>> 0, true); // nb eq
+                cursor += 4;
+                view.setUint32(cursor, 0 >>> 0, true); // nb ineq
+                cursor += 4;
+                view.setUint32(cursor, 0 >>> 0, true); // search status
+                cursor += 4;
+                view.setUint32(cursor, 0 >>> 0, true); // nb inner
+                cursor += 4;
+                view.setUint32(cursor, 0 >>> 0, true); // nb boundary
+                cursor += 4;
+                view.setUint32(cursor, plotted_sols.length >>> 0, true); // nb unkown
+                cursor += 4;
+                view.setUint32(cursor, 0 >>> 0, true); // nb pending
+                cursor += 4;
+                view.setFloat64(cursor, 2.5, true); // time
+                cursor += 8;
+                view.setUint32(cursor, 0 >>> 0, true); // nb cells
+                cursor += 4;
+                var k = 0;
+                for (let sol of plotted_sols) {
+                    k += 1;
+                    for (var i = 0; i < sol.lowers.length; i++) {
+                        view.setFloat64(cursor, sol.lowers[i], true);
+                        cursor += 8;
+                        view.setFloat64(cursor, sol.uppers[i], true);
+                        cursor += 8;
+                    }
+                    view.setUint32(cursor, 2 >>> 0, true); // box status
+                    cursor += 4;
+                }
+
+                function downloadBlob(data, fileName, mimeType) {
+                    var blob, url;
+                    blob = new Blob([data], {
+                        type: mimeType
+                    });
+                    console.log("Blob length: " + blob.size);
+                    url = window.URL.createObjectURL(blob);
+                    downloadURL(url, fileName, mimeType);
+                    setTimeout(function() {
+                        return window.URL.revokeObjectURL(url);
+                    }, 1000);
+                };
+
+                console.log("Buffer length: " + buffer.byteLength, " : " + cursor);
+
+                downloadBlob(buffer, 'plot.mnf', 'application/octet-stream');
             }
 
         }
