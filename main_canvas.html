@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/crossfilter2/1.4.3/crossfilter.min.js"></script>
-    <script type="text/javascript" src="https://d3js.org/d3.v4.min.js"></script>
+    <script type="text/javascript" src="https://d3js.org/d3.v5.min.js"></script>
     <script defer src="https://use.fontawesome.com/releases/v5.0.6/js/all.js"></script>
     <style>
         #drop_zone {
@@ -20,6 +20,28 @@
             pointer-events: all;
         }
 
+        canvas {
+            border: 1px dotted #ccc;
+        }
+
+        .hiddenCanvas {
+            /*display: none;*/
+        }
+
+        div#tooltip {
+            position: absolute;
+            display: inline-block;
+            padding: 10px;
+            font-family: 'Open Sans' sans-serif;
+            color: #000;
+            background-color: #fff;
+            border: 1px solid #999;
+            border-radius: 2px;
+            pointer-events: none;
+            opacity: 0;
+            z-index: 1;
+        }
+
     </style>
 </head>
 
@@ -31,6 +53,8 @@
     <div id="explorer">
         <div id="control"></div>
         <div id="info"></div>
+        <canvas id="canvas_plot"></canvas>
+        <div id="tooltip">hello</div>
     </div>
     <div id="detail"></div>
     <div id="selection">
@@ -54,12 +78,11 @@
         var xscale, yscale; // d3 scale objects
         var x_dom, y_dom; // current domain for each dimension
         var xratio, yratio; // ratio for scaling width of interval
+        var xAxis, yAxis;
+
         var k_zoom = 0.1; // zoom factor
         var k_last = 1; // last zoom factor when using mouse wheel zoom
-        var xAxis, yAxis; // d3 axis
-        var gX, gY; // svg g tag embedding axis
 
-        var zoom, brush, focus, view; // d3 brush for selection of boxes and d3 focus to highlight mouseover boxes
 
         var curXDim = 0; // current X dimension
         var curYDim = 1; // current Y dimension
@@ -70,6 +93,41 @@
             status_codes[status_names[i]] = i;
         }
         var status_color = ["green", "yellow", "grey", "lightgrey"]; // colors use to fill boxes depending on their status code
+
+        var canvas_color =   [
+            [0, 255, 0, .2],
+            [255, 0, 0, .2],
+            [0, 0, 255, .2],
+            [125, 125, 125, .2]
+        ];
+        var canvas, hiddenCanvas;
+        var custom = null;
+        canvas = d3.select("#canvas_plot");
+        hiddenCanvas = d3.select('#explorer')
+            .append('canvas')
+            .classed('hiddenCanvas', true);
+
+        var focus = null;
+
+        var nextCol = 1;
+        var colourToNode = {
+            //'rgb(0,0,0)': null
+        }; // Map to track the colour of nodes.
+
+        // Generate a unique color for each object being drawn in hidden canvas
+        function genColor() {
+            var ret = [];
+            if (nextCol < 16777215) {
+                ret.push(nextCol & 0xff); // R 
+                ret.push((nextCol & 0xff00) >> 8); // G 
+                ret.push((nextCol & 0xff0000) >> 16); // B
+
+                nextCol += 1;
+            }
+            var col = "rgb(" + ret.join(',') + ")";
+            return col;
+        }
+
 
         // Generate a string with all values
         sol2string = (sol) => {
@@ -235,141 +293,65 @@
 
 
         // update the drawing after an event or change in data
-        function update_svg(svg, m_id = "manifold", color = null) {
-
+        function update_plot_info() {
             // Define scale domain relating to current dimensions
             xscale.domain(x_dom);
             yscale.domain(y_dom);
             // Initialize axis objects left and bottom
             xAxis = d3.axisBottom(xscale).ticks(10);
             yAxis = d3.axisLeft(yscale).ticks(10);
-            gX.call(xAxis);
-            gY.call(yAxis);
-            //console.log("x in [" + mins[curXDim] + "," + maxs[curXDim] + "] - " + (maxs[curXDim] - mins[curXDim]));
-            //console.log("y in [" + mins[curYDim] + "," + maxs[curYDim] + "] - " + (maxs[curYDim] - mins[curYDim]));
-
-            // Update axis name
-            d3.select("#legend_x").text("x" + curXDim);
-            d3.select("#legend_y").text("x" + curYDim);
 
             // Update ratio to compute width and height of rectangles
             xratio = width / (x_dom[1] - x_dom[0]);
             yratio = height / (y_dom[1] - y_dom[0]);
-
-            // Add data as a sub graphic composed of rectangles
-            svg.append('g')
-                .attr("id", m_id)
-                .attr('transform', "translate(" + margin.left + "," + margin.top + ")") // translate considering the impact of axis
-                .selectAll("rect").data(plotted_sols).enter().append("rect")
-                .attr("x", (sol) => { // set the upper left corner x coordinate
-                    return xscale(sol.lowers[curXDim])
-                })
-                .attr("y", (sol) => { // set the upper left corner y coordinate
-                    return yscale(sol.uppers[curYDim])
-                })
-                .attr("class", "box")
-                .attr("width", (sol) => { // set ther width of rectangle
-                    return xratio * sol.width[curXDim]
-                })
-                .attr("height", (sol) => { // set the height
-                    return yratio * sol.width[curYDim]
-                })
-                .attr("fill", (sol) => {
-                    return color != null ? color : status_color[sol.status]
-                }).attr("opacity", 0.2) // fill the rectangle with a given color
-                .on("mouseover", function(d) { // add the function to call when mouse goes over
-                    //Get the rectangle x/y values
-                    var xPos = parseFloat(d3.select(this).attr("x"));
-                    var yPos = parseFloat(d3.select(this).attr("y"));
-                    // show the solution details
-                    d3.select("#detail").html("Solution detail (status=" + d.status + "): " + printsol(d));
-                    // change the color of rectangle
-                    d3.select(this)
-                        .attr("fill", "orange")
-                        .transition()
-                        .duration(250);
-
-                    // update coordinates of dashed lines to project focused box on each axis
-                    focus.select('line.x1')
-                        .attr('x1', xscale(d.lowers[curXDim]))
-                        .attr('x2', xscale(d.lowers[curXDim]))
-                        .attr('y1', yscale(d.lowers[curYDim]))
-                        .attr('y2', height);
-                    focus.select('line.x2')
-                        .attr('x1', xscale(d.uppers[curXDim]))
-                        .attr('x2', xscale(d.uppers[curXDim]))
-                        .attr('y1', yscale(d.lowers[curYDim]))
-                        .attr('y2', height);
-                    focus.select('line.y1')
-                        .attr('x1', 0)
-                        .attr('x2', xscale(d.lowers[curXDim]))
-                        .attr('y1', yscale(d.lowers[curYDim]))
-                        .attr('y2', yscale(d.lowers[curYDim]));
-                    focus.select('line.y2')
-                        .attr('x1', 0)
-                        .attr('x2', xscale(d.lowers[curXDim]))
-                        .attr('y1', yscale(d.uppers[curYDim]))
-                        .attr('y2', yscale(d.uppers[curYDim]));
-                    focus.style('display', null);
-                })
-                .on("mouseout", function() { // add the function to call when mouse goes out the rectangle
-                    // set the initial color
-                    d3.select(this)
-                        .transition()
-                        .duration(250)
-                        .attr("fill", (sol) => {
-                            return color != null ? color : status_color[sol.status]
-                        });
-                    // hide dashed lines
-                    focus.style('display', 'none');
-                    d3.select("#detail").html("");
-                });
 
             // show global information about the manifold and plotted solutions
             d3.select("#info").html(plotted_sols.length + " solutions displayed");
             //svg_str=svg.node().outerHTML;
         }
 
-        function erase_manifold(plot = "#plot_0") {
-            //svg.selectAll("#"+m_id).remove();
-            d3.select(plot).selectAll("#manifold").remove();
-        }
-
         function reset_selection() {
             console.log("Resetting selection...");
             filter_sol.filterAll();
             plotted_sols = filter_sol.top(Infinity);
-            erase_manifold();
             x_dom = [mins[curXDim], maxs[curXDim]];
             y_dom = [mins[curYDim], maxs[curYDim]];
-            update_svg(d3.select("#plot_0"));
+
+            update_plot_info();
+            data_bind(plotted_sols);
+            draw(canvas);
+            draw(hiddenCanvas, true);
         }
 
 
+
+
         // Create the initial drawing with default values
-        function create_svg(node, w = 800, h = 600, marg = null) {
+        function create_plot(w = 800, h = 600, marg = null) {
             // Define margins for the graphic to place axis
             if (marg == null) {
                 margin = {
-                    top: 20,
+                    top: 10,
                     right: 20,
-                    bottom: 50,
-                    left: 70
+                    bottom: 40,
+                    left: 50
                 };
             } else {
                 margin = marg;
             }
             width = w - margin.left - margin.right;
             height = h - margin.top - margin.bottom;
-            // create new svg node to store the graphic
-            var svg = node.append("svg")
-                .attr('xmlns:xlink', 'http://www.w3.org/1999/xlink')
-                .attr('width', w)
-                .attr('height', h)
-                .attr('id', 'plot_0')
-                .append('g')
-                .attr('id', 'view')
-                .attr('transform', "translate(" + margin.left + "," + margin.top + ")");
+
+            //canvas = d3.select("#explorer").append("canvas").attr("id", "canvas_plot");
+            canvas = d3.select("#canvas_plot");
+
+            canvas.attr('width', w);
+            canvas.attr('height', h);
+            canvas.node().getContext("2d").translate(margin.left, margin.top);
+
+            hiddenCanvas.attr('width', w)
+                .attr('height', h);
+            hiddenCanvas.node().getContext("2d").translate(margin.left, margin.top);
 
             // Initialize scale objects
             xscale = d3.scaleLinear().range([0, width]);
@@ -378,118 +360,176 @@
             x_dom = [mins[curXDim], maxs[curXDim]];
             y_dom = [mins[curYDim], maxs[curYDim]];
 
+            // Update ratio to compute width and height of rectangles
+            xratio = width / (x_dom[1] - x_dom[0]);
+            yratio = height / (y_dom[1] - y_dom[0]);
             // Initialize axis objects left and bottom
-            xAxis = d3.axisBottom(xscale).ticks(10);
-            yAxis = d3.axisLeft(yscale).ticks(10);
-            // Add the x Axis
-            gX = svg.append("g")
-                .attr("class", "axis axis--x")
-                .attr("transform", "translate(" + 0 + "," + height + ")")
-                .call(xAxis);
-            // Add the y Axis
-            gY = svg.append("g")
-                .attr("class", "axis axis--y")
-                .call(yAxis);
-            // text label for the x axis
-            svg.append("text")
-                .attr("id", "legend_x")
-                .attr("transform",
-                    "translate(" + (w / 2) + " ," +
-                    (height + margin.top + margin.bottom / 2) + ")")
-                .style("text-anchor", "middle")
-                .text("x" + curXDim);
-            // text label for the y axis
-            svg.append("text")
-                .attr("id", "legend_y")
-                //.attr("transform", "rotate(-90)")
-                .attr("x", -margin.left / 2)
-                .attr("y", h / 2)
-                .style("text-anchor", "middle")
-                .text("x" + curYDim);
+            //xAxis = d3.axisBottom(xscale).ticks(10);
+            //yAxis = d3.axisLeft(yscale).ticks(10);
 
-            //view = svg.append("d").attr("id","view");
+            update_plot_info();
+            data_bind(plotted_sols);
+            draw(canvas);
+            draw(hiddenCanvas, true);
 
-            // Generate date inside the graphic
-            update_svg(d3.select("#plot_0"));
+            d3.select('#canvas_plot').on('mousemove', function() {
+                //draw(hiddenCanvas, true); // Draw the hidden canvas.
+                // Get mouse positions from the main canvas.
+                var mouseX = d3.event.clientX;
+                var mouseY = d3.event.clientY;
 
-            // Add objects when focus on a box
-            focus = svg.append('g')
-                .attr('class', 'focus')
-                .style('display', 'none');
+                var rect = canvas.node().getBoundingClientRect();
+                mouseX -= rect.left;
+                mouseY -= rect.top;
 
-            focus.append('line')
-                .classed('x1', true);
-            focus.append('line')
-                .classed('x2', true);
+                // Get the toolbox for the hidden canvas.
+                var hiddenCtx = hiddenCanvas.node().getContext('2d');
 
-            focus.append('line')
-                .classed('y1', true);
-            focus.append('line')
-                .classed('y2', true);
+                // Pick the colour from the mouse position. 
+                var col = hiddenCtx.getImageData(mouseX, mouseY, 1, 1).data;
 
-            d3.selectAll('.focus line')
-                .style('fill', 'none')
-                .style('stroke', 'black')
-                .style('stroke-width', '1.5px')
-                .style('stroke-dasharray', '3 3')
-                .style('opacity', 0.7);
+                // Then stringify the values in a way our map-object can read it.
+                var colKey = 'rgb(' + col[0] + ',' + col[1] + ',' + col[2] + ')';
 
-            zoom = d3.zoom()
-                .scaleExtent([1, Infinity])
-                .translateExtent([
-                    [0, 0],
-                    [width, height]
-                ])
-                .extent([
-                    [0, 0],
-                    [width, height]
-                ])
-                .on("zoom", zoomed);
-
-            svg.append("rect")
-                .attr("width", width)
-                .attr("height", height)
-                .style("fill", "none")
-                .style("pointer-events", "all")
-                .call(zoom);
-
-            function zoomed() {
-                // TODO
-                console.log(JSON.stringify(d3.event.transform));
-
-                var k = d3.event.transform.k - k_last;
-
-                k_last = d3.event.transform.k;
-                var w_x = x_dom[1] - x_dom[0];
-                var w_y = y_dom[1] - y_dom[0];
-                if (k > 0) {
-                    x_dom[0] += w_x * k_zoom;
-                    x_dom[1] -= w_x * k_zoom;
-                    y_dom[0] += w_y * k_zoom;
-                    y_dom[1] -= w_y * k_zoom;
+                // Get the data from our map! 
+                var nodeData = colourToNode[colKey];
+                if (nodeData) {
+                    d3.select('#tooltip')
+                        .style('opacity', 0.8)
+                        .style('top', d3.event.pageY + 5 + 'px')
+                        .style('left', d3.event.pageX + 5 + 'px')
+                        .html(printsol(nodeData));
+                    if (focus != nodeData) {
+                        //console.log(nodeData);
+                        var ctx = canvas.node().getContext('2d');
+                        if (focus != null) {
+                            ctx.clearRect(xscale(focus.lowers[curXDim]), yscale(focus.uppers[curYDim]), xratio * focus.width[curXDim], yratio * focus.width[curYDim]);
+                            ctx.fillStyle = 'rgba(' + canvas_color[focus.status] + ')';
+                            ctx.fillRect(xscale(focus.lowers[curXDim]), yscale(focus.uppers[curYDim]), xratio * focus.width[curXDim], yratio * focus.width[curYDim]);
+                        }
+                        focus = nodeData;
+                        ctx.clearRect(xscale(focus.lowers[curXDim]), yscale(focus.uppers[curYDim]), xratio * focus.width[curXDim], yratio * focus.width[curYDim]);
+                        ctx.fillStyle = 'rgba(200,50,50,0.2)';
+                        ctx.fillRect(xscale(focus.lowers[curXDim]), yscale(focus.uppers[curYDim]), xratio * focus.width[curXDim], yratio * focus.width[curYDim]);
+                    }
                 } else {
-                    x_dom[0] -= w_x * k_zoom;
-                    x_dom[1] += w_x * k_zoom;
-                    y_dom[0] -= w_y * k_zoom;
-                    y_dom[1] += w_y * k_zoom;
+                    // Hide the tooltip when the mouse doesn't find nodeData.
+
+                    d3.select('#tooltip').style('opacity', 0);
+
                 }
 
-                filter_sol.filterFunction(function(d) {
-                    return ((d.lowers[curXDim] >= x_dom[0] && d.lowers[curXDim] <= x_dom[1]) ||
-                            (d.uppers[curXDim] <= x_dom[1] && d.uppers[curXDim] >= x_dom[0])) &&
-                        ((d.lowers[curYDim] >= y_dom[0] && d.lowers[curYDim] <= y_dom[1]) ||
-                            (d.uppers[curYDim] <= y_dom[1] && (d.uppers[curYDim] >= y_dom[0])));
-                });
-
-                // update the set of solution to plot
-                plotted_sols = filter_sol.top(Infinity);
-                d3.select("#info").html(plotted_sols.length + " solutions displayed");
-                // clean current graphic
-                erase_manifold();
-                // add new data relating to current zoom
-                update_svg(d3.select("#plot_0"));
-            }
+            });
         }
+
+
+        function data_bind(data_plot) {
+            var customBase = document.createElement("custom");
+            custom = d3.select(customBase);
+
+            custom.selectAll('custom.box')
+                .data(data_plot)
+                .enter()
+                .append("custom")
+                .attr("class", "box")
+                .attr("x", (d) => xscale(d.lowers[curXDim]))
+                .attr("y", (d) => yscale(d.uppers[curYDim]))
+                .attr("width", (d) => xratio * d.width[curXDim])
+                .attr("height", (d) => yratio * d.width[curYDim])
+                .attr("fillStyle", (d) => 'rgba(' + canvas_color[d.status] + ')') //; //status_color[d.status]);
+                .attr('fillStyleHidden', function(d) {
+                    if (!d.hiddenCol) {
+                        d.hiddenCol = genColor();
+                        colourToNode[d.hiddenCol] = d;
+                    }
+                    // Here you (1) add a unique colour as property to each element 
+                    // and(2) map the colour to the node in the colourToNode-map.
+                    return d.hiddenCol;
+                });
+        }
+
+        function drawAxis(canvas, grid_size = 20) {
+            var ctx = canvas.node().getContext('2d');
+
+            var padding = 2;
+            var tickCount;
+            var tickSize = 6;
+            var ticks_x = xscale.ticks(tickCount);
+            var ticks_y = yscale.ticks(tickCount);
+
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = "black";
+            ctx.fillStyle = "black";
+            ctx.font = "normal 10px sans-serif";
+
+            // x axis
+            ctx.beginPath();
+            // draw ticks
+            ticks_x.forEach(function(d) {
+                ctx.moveTo(xscale(d), height + padding - tickSize / 2);
+                ctx.lineTo(xscale(d), height + padding + tickSize / 2);
+            });
+            ctx.stroke();
+            // draw axis line
+            ctx.beginPath();
+            ctx.moveTo(-2 * padding, height + padding + tickSize / 2);
+            ctx.lineTo(width, height + padding + tickSize / 2);
+            ctx.stroke();
+            //draw legend
+            ctx.textAlign = "center";
+            ctx.textBaseline = "top";
+            ticks_x.forEach(function(d) {
+                ctx.fillText(d, xscale(d), height + padding + tickSize + 1);
+            });
+
+            // y axis
+            ctx.beginPath();
+            // draw ticks
+            ticks_y.forEach(function(d) {
+                ctx.moveTo(tickSize / 2, yscale(d));
+                ctx.lineTo(-tickSize / 2, yscale(d));
+            });
+            ctx.stroke();
+            // draw axis line
+            ctx.beginPath();
+            ctx.moveTo(-padding - tickSize / 2, margin.top - 1);
+            ctx.lineTo(-padding - tickSize / 2, height + 3 * padding);
+            ctx.stroke();
+            // draw legend
+            ctx.textAlign = "right";
+            ctx.textBaseline = "middle";
+            ticks_y.forEach(function(d) {
+                ctx.fillText(d, -2 * padding - tickSize, yscale(d));
+            });
+
+            ctx.font = "bold 12px sans-serif";
+            ctx.fillText("x" + curXDim, width, margin.top + height + margin.bottom / 2);
+            ctx.fillText("y" + curYDim, -margin.left / 2, margin.top + tickSize);
+        }
+
+        function draw(canv, hidden = false) {
+            var context = canv.node().getContext('2d');
+            context.clearRect(-margin.left, -margin.top, canv.node().width + margin.left, canv.node().height + margin.top); // Clear the canvas.
+            // Draw each individual custom element with their properties.
+
+            drawAxis(canv);
+
+            var boxes = custom.selectAll('custom.box');
+            // Grab all elements you bound data to in the databind() function.
+            boxes.each(function(d, i) { // For each virtual/custom element...
+                var node = d3.select(this);
+                // This is each individual element in the loop. 
+                //context.fillStyle = node.attr('fillStyle');
+                context.fillStyle = hidden ? node.attr('fillStyleHidden') : node.attr('fillStyle');
+                // The node colour depends on the canvas you draw.
+                //console.log(hidden + " ? " + node.attr('fillStyleHidden') + " : " + node.attr('fillStyle') + " = " + (hidden ? node.attr('fillStyleHidden') : node.attr('fillStyle')));
+                // Here you retrieve the colour from the individual in-memory node and set the fillStyle for the canvas paint
+                context.fillRect(node.attr('x') + margin.left, node.attr('y') + margin.top, node.attr('width'), node.attr('height'));
+                //console.log(node.attr('x') + "x" + node.attr('y') + ", " + node.attr('width') + "x" + node.attr('height'));
+                // Here you retrieve the position of the node and apply it to the fillRect context function which will fill and paint the square.
+            }); // Loop through each element.
+        }
+
 
 
         // Add inputs to update the graphic
@@ -596,8 +636,6 @@
                 var selectValue = d3.select('#selX').property('value');
                 // get the number corresponding to the selection
                 curXDim = parseInt(selectValue.substring(1));
-                // clean current graphic
-                erase_manifold();
 
                 var minAcc = function(d) {
                     return d.lowers[curXDim];
@@ -610,7 +648,11 @@
 
                 //reset_selection();
                 // add new data relating to new selected dimension
-                update_svg(d3.select("#plot_0"));
+                update_plot_info();
+
+                data_bind(plotted_sols);
+                draw(canvas);
+                draw(hiddenCanvas, true);
             };
 
             // function called when dimension for y axis change
@@ -618,8 +660,6 @@
                 var selectValue = d3.select('#selY').property('value');
                 // get the number corresponding to the selection
                 curYDim = parseInt(selectValue.substring(1));
-                // clean current graphic
-                erase_manifold();
 
                 var minAcc = function(d) {
                     return d.lowers[curYDim];
@@ -632,7 +672,12 @@
 
                 //reset_selection();
                 // add new data relating to new selected dimension
-                update_svg(d3.select("#plot_0"));
+                update_plot_info();
+
+
+                data_bind(plotted_sols);
+                draw(canvas);
+                draw(hiddenCanvas, true);
             };
 
             // function called when status change
@@ -648,8 +693,6 @@
                 // update the set of solution to plot
                 plotted_sols = filter_by_status.top(Infinity);
                 d3.select("#info").html(plotted_sols.length + " solutions displayed");
-                // clean current graphic
-                erase_manifold();
 
                 var minAcc = function(d) {
                     return d.lowers[curXDim];
@@ -662,72 +705,16 @@
 
                 //reset_selection();
                 // add new data relating to new selected status
-                update_svg(d3.select("#plot_0"));
+                update_plot_info();
+
+                data_bind(plotted_sols);
+                draw(canvas);
+                draw(hiddenCanvas, true);
             };
 
 
             function crop() {
                 // TODO
-
-                if (brush == null) {
-                    // Add brush selection
-                    brush = d3.brush()
-                        .extent([
-                            [0, 0],
-                            [width, height]
-                        ])
-                        .on("end", brushed);
-
-                    function brushed() {
-                        if (!d3.event.sourceEvent) return; // Only transition after input.
-                        if (d3.event.sourceEvent && d3.event.sourceEvent.type === "zoom") return; // ignore brush-by-zoom
-                        if (d3.event.selection != null) {
-                            var selection = d3.event.selection;
-                            var x1 = Math.min(xscale.invert(selection[0][0]), xscale.invert(selection[1][0]));
-                            var x2 = Math.max(xscale.invert(selection[0][0]), xscale.invert(selection[1][0]));
-                            var y1 = Math.min(yscale.invert(selection[0][1]), yscale.invert(selection[1][1]));
-                            var y2 = Math.max(yscale.invert(selection[0][1]), yscale.invert(selection[1][1]));
-
-                            filter_sol.filterFunction(function(d) {
-                                return d.lowers[curXDim] >= x1 && d.uppers[curXDim] <= x2 && d.lowers[curYDim] >= y1 && d.uppers[curYDim] <= y2;
-                            });
-
-                            plotted_sols = filter_sol.top(Infinity);
-
-                            x_dom = [x1, x2];
-                            y_dom = [y1, y2];
-                            erase_manifold();
-                            // Add red boxes for the selection
-                            update_svg(d3.select("#plot_0"));
-                            // Erase the grey box drawn by brush when selecting
-                            d3.selectAll(".brush").call(brush.move, null);
-
-                            var info = d3.select('#info_selection').html(plotted_sols.length + " selected solution(s) within: [" + x1 + "," + x2 + "]x[" + y1 + "," + y2 + "]");
-                        }
-                    }
-                    d3.select("#crop").attr("class", "fas fa-crosshairs").attr("clicked", 1).style("background-color", "grey");
-                    d3.select("#plot_0").append("g")
-                        .attr("class", "brush")
-                        .call(brush);
-                } else {
-                    if (d3.selectAll("#crop").attr("clicked") == 0) {
-                        d3.select("#crop").attr("clicked", 1);
-                        console.log("Activating crop");
-                        d3.select("#crop").style("background-color", "grey");
-                        //d3.select("#crop").attr("class","fas fa-crosshairs").node().toggle();
-                        //d3.selectAll("g.brush").call(brush.move,[width,height]);
-                        d3.select("#plot_0").append("g")
-                            .attr("class", "brush")
-                            .call(brush);
-                    } else {
-                        console.log("Disabling crop");
-                        d3.select("#crop").attr("clicked", 0);
-                        d3.select("#crop").style("background", "none");
-                        //d3.select("#crop").attr("class","fas fa-crop");
-                        d3.selectAll("g.brush").remove(); //call(brush.move,null);
-                    }
-
-                }
 
             }
 
@@ -751,11 +738,14 @@
                 // update the set of solution to plot
                 plotted_sols = filter_sol.top(Infinity);
                 d3.select("#info").html(plotted_sols.length + " solutions displayed");
-                // clean current graphic
-                erase_manifold();
+
                 //reset_selection();
                 // add new data relating to new selected status
-                update_svg(d3.select("#plot_0"));
+                update_plot_info();
+
+                data_bind(plotted_sols);
+                draw(canvas);
+                draw(hiddenCanvas, true);
             }
 
 
@@ -778,11 +768,13 @@
                 // update the set of solution to plot
                 plotted_sols = filter_sol.top(Infinity);
                 d3.select("#info").html(plotted_sols.length + " solutions displayed");
-                // clean current graphic
-                erase_manifold();
                 //reset_selection();
                 // add new data relating to new selected status
-                update_svg(d3.select("#plot_0"));
+                update_plot_info();
+
+                data_bind(plotted_sols);
+                draw(canvas);
+                draw(hiddenCanvas, true);
             }
 
 
@@ -798,8 +790,10 @@
             };
 
             function export_image() {
+                var img    = d3.select("#canvas_plot").node().toDataURL("image/png");
+                downloadURL(img,"plot.png");
                 //get svg element.
-                var svg = d3.select("#plot_0").node();
+                /*var svg = d3.select("#plot_0").node();
                 console.log("Export current graphic as svg file");
                 //get svg source.
                 var serializer = new XMLSerializer();
@@ -825,7 +819,7 @@
                 //you can download svg file by right click menu.
                 link.node().click();
                 link.remove();*/
-                downloadURL(url, "plot.svg")
+                //downloadURL(url, "plot.svg")
             }
 
             function export_manifold() {
@@ -908,7 +902,6 @@
                 for (var i = 0; i < dt.items.length; i++) {
                     if (dt.items[i].kind == "file") {
                         // Remove previous elements if a drawing exists
-                        d3.select("#explorer").selectAll("svg").remove();
                         d3.select("#explorer").selectAll("select").remove();
                         d3.select("#explorer").selectAll("input").remove();
 
@@ -941,7 +934,7 @@
 
                             create_controls(d3.select("#control"));
 
-                            create_svg(d3.select("#explorer"));
+                            create_plot();
                         }
 
                         reader.readAsArrayBuffer(f);
