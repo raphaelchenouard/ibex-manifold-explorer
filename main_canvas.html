@@ -24,8 +24,9 @@
             border: 1px dotted #ccc;
         }
 
-        .hiddenCanvas {
+        #hiddenCanvas {
             /*display: none;*/
+            z-index: 3;
         }
 
         div#tooltip {
@@ -42,6 +43,18 @@
             z-index: 1;
         }
 
+        .plot {
+            position: absolute;
+        }
+
+        #canvas_plot {
+            z-index: 2;
+        }
+
+        #empty_svg {
+            z-index: 1;
+        }
+
     </style>
 </head>
 
@@ -53,7 +66,9 @@
     <div id="explorer">
         <div id="control"></div>
         <div id="info"></div>
-        <canvas id="canvas_plot"></canvas>
+        <svg id="empty_svg" class="plot"></svg>
+        <canvas id="canvas_plot" class="plot"></canvas>
+        <canvas id="hiddenCanvas" class="plot"></canvas>
         <div id="tooltip">hello</div>
     </div>
     <div id="detail"></div>
@@ -103,9 +118,10 @@
         var canvas, hiddenCanvas;
         var custom = null;
         canvas = d3.select("#canvas_plot");
-        hiddenCanvas = d3.select('#explorer')
-            .append('canvas')
-            .classed('hiddenCanvas', true);
+        hiddenCanvas = d3.select("#hiddenCanvas");
+        /*d3.select('#explorer')
+                    .append('canvas')
+                    .attr('id','hiddenCanvas');*/
 
         var focus = null;
 
@@ -342,8 +358,9 @@
             width = w - margin.left - margin.right;
             height = h - margin.top - margin.bottom;
 
+            //canvas = d3.select("canvas");
             //canvas = d3.select("#explorer").append("canvas").attr("id", "canvas_plot");
-            canvas = d3.select("#canvas_plot");
+            //canvas = d3.select("#canvas_plot");
 
             canvas.attr('width', w);
             canvas.attr('height', h);
@@ -352,6 +369,12 @@
             hiddenCanvas.attr('width', w)
                 .attr('height', h);
             hiddenCanvas.node().getContext("2d").translate(margin.left, margin.top);
+
+            var svg = d3.select("#empty_svg")
+                .attr("width", w)
+                .attr("height", h)
+                .append("g")
+                .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
             // Initialize scale objects
             xscale = d3.scaleLinear().range([0, width]);
@@ -367,13 +390,30 @@
             //xAxis = d3.axisBottom(xscale).ticks(10);
             //yAxis = d3.axisLeft(yscale).ticks(10);
 
+            // create zoom behaviour
+            var zoom = d3.zoom()
+                .scaleExtent([1, 40])
+                .on("zoom", onZoom);
+
+            function onZoom() {
+                canvas.attr("transform", d3.event.transform);
+                update_plot_info();
+                data_bind(plotted_sols);
+                draw(canvas);
+                draw(hiddenCanvas, true);
+            }
+
+            // add zoom behaviour
+            canvas.call(zoom);
+
             update_plot_info();
             data_bind(plotted_sols);
             draw(canvas);
             draw(hiddenCanvas, true);
 
+
             d3.select('#canvas_plot').on('mousemove', function() {
-                //draw(hiddenCanvas, true); // Draw the hidden canvas.
+                draw(hiddenCanvas, true); // Draw the hidden canvas.
                 // Get mouse positions from the main canvas.
                 var mouseX = d3.event.clientX;
                 var mouseY = d3.event.clientY;
@@ -420,8 +460,44 @@
                 }
 
             });
-        }
 
+            canvas.call(d3.zoom().scaleExtent([1, 8]).on("zoom", zoom));
+
+
+            function zoom() {
+                var k = d3.event.transform.k - k_last;
+
+                k_last = d3.event.transform.k;
+                var w_x = x_dom[1] - x_dom[0];
+                var w_y = y_dom[1] - y_dom[0];
+                if (k > 0) {
+                    x_dom[0] += w_x * k_zoom;
+                    x_dom[1] -= w_x * k_zoom;
+                    y_dom[0] += w_y * k_zoom;
+                    y_dom[1] -= w_y * k_zoom;
+                } else {
+                    x_dom[0] -= w_x * k_zoom;
+                    x_dom[1] += w_x * k_zoom;
+                    y_dom[0] -= w_y * k_zoom;
+                    y_dom[1] += w_y * k_zoom;
+                }
+
+                filter_sol.filterFunction(function(d) {
+                    return ((d.lowers[curXDim] >= x_dom[0] && d.lowers[curXDim] <= x_dom[1]) ||
+                            (d.uppers[curXDim] <= x_dom[1] && d.uppers[curXDim] >= x_dom[0])) &&
+                        ((d.lowers[curYDim] >= y_dom[0] && d.lowers[curYDim] <= y_dom[1]) ||
+                            (d.uppers[curYDim] <= y_dom[1] && (d.uppers[curYDim] >= y_dom[0])));
+                });
+
+                // update the set of solution to plot
+                plotted_sols = filter_sol.top(Infinity);
+                //d3.select("#info").html(plotted_sols.length + " solutions displayed");
+                update_plot_info();
+                data_bind(plotted_sols);
+                draw(canvas);
+                draw(hiddenCanvas, true);
+            }
+        }
 
         function data_bind(data_plot) {
             var customBase = document.createElement("custom");
@@ -539,6 +615,8 @@
             for (var i = 0; i < nb_var; i++) {
                 dim_names.push("x" + i);
             }
+            node.selectAll("*").remove();
+
             // Add a list selection for dimension of x axis
             var selX = node.append('select')
                 .attr("id", "selX")
@@ -692,7 +770,7 @@
                 }
                 // update the set of solution to plot
                 plotted_sols = filter_by_status.top(Infinity);
-                d3.select("#info").html(plotted_sols.length + " solutions displayed");
+                //d3.select("#info").html(plotted_sols.length + " solutions displayed");
 
                 var minAcc = function(d) {
                     return d.lowers[curXDim];
@@ -790,8 +868,8 @@
             };
 
             function export_image() {
-                var img    = d3.select("#canvas_plot").node().toDataURL("image/png");
-                downloadURL(img,"plot.png");
+                var img = d3.select("#canvas_plot").node().toDataURL("image/png");
+                downloadURL(img, "plot.png");
                 //get svg element.
                 /*var svg = d3.select("#plot_0").node();
                 console.log("Export current graphic as svg file");

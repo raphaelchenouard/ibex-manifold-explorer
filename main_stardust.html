@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <script type="text/javascript" src="libs/crossfilter.v1.4.3.min.js"></script>
+    <script type="text/javascript" src="libs/stardust.bundle.v0.1.1.min.js"></script>
+    <script type="text/javascript" src="libs/d3.v5.min.js"></script>
+    <script defer src="libs/fontawesome.v5.0.6.all.js"></script>
+    <script type="text/javascript" src="js/stardust_utils.js"></script>
+    <script type="text/javascript" src="js/io.js"></script>
+    <script type="text/javascript" src="js/filter.js"></script>
+    <script type="text/javascript" src="js/ui.js"></script>
+    <script type="text/javascript" src="js/plot.js"></script>
+    <style>
+        #drop_zone {
+            border: 2px dashed grey;
+            width: 300px;
+            height: 50px;
+            margin: 10px;
+        }
+
+        #fps {
+            position: fixed;
+            top: 0;
+            right: 0;
+            padding: 10px;
+            margin: 0;
+            font-size: 15px;
+        }
+
+        .plot {
+            background-color: transparent;
+            position: absolute;
+            /*height: 600px;
+            width: 800px;*/
+        }
+
+        #canvas_plot {
+            border: 1px dotted #ccc;
+            z-index: 1;
+        }
+
+        #svg_axis {
+            z-index: 0;
+        }
+
+        div#tooltip {
+            position: absolute;
+            display: inline-block;
+            padding: 10px;
+            font-family: 'Open Sans' sans-serif;
+            color: #000;
+            background-color: #fff;
+            border: 1px solid #999;
+            border-radius: 2px;
+            pointer-events: none;
+            opacity: 0;
+            z-index: 2;
+        }
+
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: black;
+            shape-rendering: crispEdges;
+        }
+
+    </style>
+</head>
+
+<body>
+    <h1>Manifold Explorer</h1>
+    <div id="drop_zone" ondrop="drop_handler(event);" ondragover="dragover_handler(event);" ondragend="dragend_handler(event);">
+        <strong>Drag one manifold file here ...</strong>
+    </div>
+    <div id="explorer">
+        <div id="control"></div>
+        <div id="info">
+            <!--div class="fps"></div-->
+        </div>
+        <div id="fps"></div>
+        <canvas id="canvas_plot" class="plot"></canvas>
+        <canvas id="canvas_image" class="plot"></canvas>
+        <svg id="svg_axis"></svg>
+        <div id="tooltip">hello</div>
+    </div>
+    <div id="detail">
+    </div>
+    <div id="selection">
+        <div id="info_selection"></div>
+        <div id="detail_selection"></div>
+    </div>
+
+
+    <script>
+        var solution_set;
+        var sols = []; // raw solutions
+        var mins = []; // min value for each dimension
+        var maxs = []; // max value for each dimension
+
+        var nb_var = 0; // number of dimensions
+        var cf; // crossfilter object
+        var filter_by_status = []; // crossfilter dimension filtering on status
+        var filter_sol = []; // crossfilter dimension used to filter solutions on their bounds
+        var plotted_sols = []; // plotted solutions after filtering
+
+        var width = 800,
+            height = 600,
+            margin = {
+                top: 10,
+                right: 20,
+                bottom: 40,
+                left: 50
+            };
+        var xscale, yscale; // stardust scale objects
+        var x_sc, y_sc; // d3 scale objects
+        var x_dom, y_dom; // current domain for each dimension
+
+        var xAxis, yAxis; // d3 axis
+        var gX, gY; // svg g tag embedding axis
+
+        var zoom;
+        var k_zoom = 0.1; // zoom factor
+        var k_last = 1; // last zoom factor when using mouse wheel zoom
+
+
+        var curXDim = 0; // current X dimension
+        var curYDim = 1; // current Y dimension
+
+        var status_names = ["Inner", "Boundary", "Unkown", "Pending", "All"];
+        var status_codes = {}; // dictionary of status names and codes
+        for (var i = 0; i < status_names.length; i++) {
+            status_codes[status_names[i]] = i;
+        }
+        var status_color = ["green", "yellow", "grey", "lightgrey"]; // colors use to fill boxes depending on their status code
+
+        var canvas_color =   [
+            [0, 255, 0, .2],
+            [255, 0, 0, .2],
+            [0, 0, 255, .2],
+            [125, 125, 125, .2]
+        ];
+        var canvas;
+        var platform;
+
+        canvas = d3.select("#canvas_plot");
+
+        var boxes, boxes2, axis;
+        var fps = new FPS();
+        var focus = false;
+
+        // Generate a string with all values
+        sol2string = (sol) => {
+            var str = "[" + sol.lowers[0] + "," + sol.uppers[0] + "]";
+            for (var i = 1; i < nb_var; i++) {
+                str += " x [" + sol.lowers[i] + "," + sol.uppers[i] + "]";
+            }
+            return str;
+        }
+
+        // Generate a string with current dimensions
+        printsol = (sol) => {
+            var str = "[" + sol.lowers[curXDim] + "," + sol.uppers[curXDim] + "]";
+            str += " x [" + sol.lowers[curYDim] + "," + sol.uppers[curYDim] + "]";
+            return str;
+        }
+
+        // print the result of a filter
+        function print_filter(filter) {
+            var f = eval(filter);
+            if (typeof(f.length) != "undefined") {} else {}
+            if (typeof(f.top) != "undefined") {
+                f = f.top(Infinity);
+            } else {}
+            if (typeof(f.dimension) != "undefined") {
+                f = f.dimension(function(d) {
+                    return "";
+                }).top(Infinity);
+            } else {}
+            //console.log(filter + "(" + f.length + ") = " + JSON.stringify(f).replace("[", "[\n\t").replace(/}\,/g, "},\n\t").replace("]", "\n]"));
+        }
+
+
+        function zoom_in(x = 0, y = 0) {
+            console.log("in: " + x + "," + y);
+            var w_x = x_dom[1] - x_dom[0];
+            var w_y = y_dom[1] - y_dom[0];
+            x_dom[0] += w_x * k_zoom + x;
+            x_dom[1] -= w_x * k_zoom + x;
+            y_dom[0] += w_y * k_zoom + y;
+            y_dom[1] -= w_y * k_zoom + y;
+
+            filter_sol.filterFunction(function(d) {
+                //return d.lowers[curXDim] >= x_dom[0] && d.uppers[curXDim] <= x_dom[1] && d.lowers[curYDim] >= y_dom[0] && d.uppers[curYDim] <= y_dom[1];
+                return ((d.lowers[curXDim] >= x_dom[0] && d.lowers[curXDim] <= x_dom[1]) ||
+                        (d.uppers[curXDim] <= x_dom[1] && d.uppers[curXDim] >= x_dom[0])) &&
+                    ((d.lowers[curYDim] >= y_dom[0] && d.lowers[curYDim] <= y_dom[1]) ||
+                        (d.uppers[curYDim] <= y_dom[1] && (d.uppers[curYDim] >= y_dom[0])));
+            });
+
+            // update the set of solution to plot
+            plotted_sols = filter_sol.top(Infinity);
+            d3.select("#info").html(plotted_sols.length + " solutions displayed");
+
+            //reset_selection();
+            // add new data relating to new selected status
+            update_plot_info();
+
+            drawBoxes(plotted_sols);
+            drawAxis(canvas);
+        }
+
+
+        function zoom_out(x = 0, y = 0) {
+            console.log("out: " + x + "," + y);
+            var w_x = x_dom[1] - x_dom[0];
+            var w_y = y_dom[1] - y_dom[0];
+            x_dom[0] -= w_x * k_zoom + x;
+            x_dom[1] += w_x * k_zoom + x;
+            y_dom[0] -= w_y * k_zoom + y;
+            y_dom[1] += w_y * k_zoom + y;
+
+            filter_sol.filterFunction(function(d) {
+                //return d.lowers[curXDim] >= x_dom[0] && d.uppers[curXDim] <= x_dom[1] && d.lowers[curYDim] >= y_dom[0] && d.uppers[curYDim] <= y_dom[1];
+                return ((d.lowers[curXDim] >= x_dom[0] && d.lowers[curXDim] <= x_dom[1]) ||
+                        (d.uppers[curXDim] <= x_dom[1] && d.uppers[curXDim] >= x_dom[0])) &&
+                    ((d.lowers[curYDim] >= y_dom[0] && d.lowers[curYDim] <= y_dom[1]) ||
+                        (d.uppers[curYDim] <= y_dom[1] && (d.uppers[curYDim] >= y_dom[0])));
+            });
+
+            // update the set of solution to plot
+            plotted_sols = filter_sol.top(Infinity);
+            d3.select("#info").html(plotted_sols.length + " solutions displayed");
+            //reset_selection();
+            // add new data relating to new selected status
+            update_plot_info();
+
+            drawBoxes(plotted_sols);
+            drawAxis(canvas);
+        }
+
+
+        // update the drawing after an event or change in data
+        function update_plot_info() {
+            // Define scale domain relating to current dimensions
+            xscale.domain(x_dom);
+            yscale.domain(y_dom);
+
+            // show global information about the manifold and plotted solutions
+            d3.select("#info").html(plotted_sols.length + " solutions displayed");
+        }
+
+
+        function reset_selection() {
+            console.log("Resetting selection...");
+            filter_sol.filterAll();
+            plotted_sols = filter_sol.top(Infinity);
+            x_dom = [mins[curXDim], maxs[curXDim]];
+            y_dom = [mins[curYDim], maxs[curYDim]];
+
+            canvas.call(zoom);
+            k_last = 1;
+            var t = d3.zoomTransform(canvas.node());
+            t.x = 0;
+            t.y = 0;
+            t.k = 1;
+            console.log(d3.zoomTransform(canvas.node()));
+
+            update_plot_info();
+
+            drawBoxes(plotted_sols);
+            drawAxis(canvas);
+        }
+
+
+
+
+        // Function that handle the manifold file drop
+        function drop_handler(ev) {
+            ev.preventDefault();
+            console.log("Drop");
+            // If dropped items aren't files, reject them
+            var dt = ev.dataTransfer;
+            if (dt.items) {
+                // Use DataTransferItemList interface to access the file(s)
+                for (var i = 0; i < dt.items.length; i++) {
+                    if (dt.items[i].kind == "file") {
+                        // Remove previous elements if a drawing exists
+                        d3.select("#explorer").selectAll("select").remove();
+                        d3.select("#explorer").selectAll("input").remove();
+
+                        // Process the ith file, normally only 1 file to process
+                        var f = dt.items[i].getAsFile();
+                        var reader = new FileReader();
+
+                        // Function called after data loading achieved
+                        reader.onloadend = function() {
+                            solution_set = parse_data_ibex_v2(reader.result);
+                            if (solution_set != null) {
+                                sols = sol_set.sols;
+                                mins = sol_set.mins;
+                                maxs = sol_set.maxs;
+                                // Initialize crossfilter with read solutions
+
+                                var c_filter = init_filtering(sols);
+
+                                cf = c_filter.cf;
+
+                                // create filters
+                                filter_sol = c_filter.filter_sol;
+                                filter_by_status = c_filter.filter_by_status;
+
+                                plotted_sols = filter_by_status.top(Infinity);
+                                console.log(plotted_sols.length + " filtered solutions");
+
+                                create_controls(d3.select("#control"));
+
+                                create_plot();
+                                drawBoxes(plotted_sols);
+                                drawAxis(canvas);
+                            } else {
+                                console.log("Wrong file format!");
+                            }
+                        }
+
+                        reader.readAsArrayBuffer(f);
+                    }
+                }
+            } else {
+                // Use DataTransfer interface to access the file(s)
+                for (var i = 0; i < dt.files.length; i++) {
+                    console.log("... file[" + i + "].name = " + dt.files[i].name);
+                }
+            }
+        }
+
+        function dragover_handler(ev) {
+            // Prevent default select and drag behavior
+            ev.preventDefault();
+        }
+
+        function dragend_handler(ev) {
+            // Remove all of the drag data
+            var dt = ev.dataTransfer;
+            if (dt.items) {
+                // Use DataTransferItemList interface to remove the drag data
+                for (var i = 0; i < dt.items.length; i++) {
+                    dt.items.remove(i);
+                }
+            } else {
+                // Use DataTransfer interface to remove the drag data
+                ev.dataTransfer.clearData();
+            }
+        }
+
+    </script>
+</body>
+
+</html>
