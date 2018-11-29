@@ -1,8 +1,10 @@
 // return a solution set object from a buffer, ie. a binary mnf file
-function parse_data_ibex_v2(buffer) {
+function parse_data_ibex(buffer) {
     try {
         // initialize solutions data arrays
         var sols = []; // list of solutions
+        var var_names = []; // names of variables in the manifold
+        var names_id = {};
         var mins = []; // list of minimums, i.e. lower bounds
         var maxs = []; // list of maximums, i.e. upper bounds
 
@@ -41,6 +43,37 @@ function parse_data_ibex_v2(buffer) {
         sol_set.nb_ineq = nb_ineq;
         console.log(nb_var + " variables, " + nb_eq + " equalities and " + nb_ineq + " inequalities");
 
+        var_names = [];
+        names_id = {};
+        if (ver == 4) { // V4 of manifold format with names for variables
+            var cur_name = "";
+            var ch = dec.decode(buffer.slice(20 + cursor, 21 + cursor)); //dec.decode(bytes);
+            var i_ch = new Uint8Array(buffer.slice(20 + cursor, 21 + cursor));
+            var prev_ich = 1;
+            cursor += 1;
+            while (i_ch != 0 || prev_ich != 0) { // The list of names ends with an end of line
+                if (i_ch == 0) { // End of a name
+                    var_names.push(cur_name);
+                    names_id[cur_name] = var_names.length - 1;
+                    cur_name = "";
+                } else { // A character of the name
+                    cur_name += ch;
+                }
+                prev_ich = i_ch;
+                ch = dec.decode(buffer.slice(20 + cursor, 21 + cursor)); //dec.decode(bytes);
+                i_ch = new Uint8Array(buffer.slice(20 + cursor, 21 + cursor));
+                cursor += 1;
+            }
+            console.log("Variables: " + var_names);
+            // One more byte was read
+            cursor -= 1;
+        } else { // v2
+            // Creating default names for variables
+            for (var i = 1; i <= nb_var; i++) {
+                var_names.push("x" + i);
+                names_id[cur_name] = var_names.length - 1;
+            }
+        }
         // read the solving status that ended with this manifold (see ibex doc for that)
         const result_status = view.getUint32(cursor, true);
         cursor += 4;
@@ -139,6 +172,8 @@ function parse_data_ibex_v2(buffer) {
         sol_set.sols = sols;
         sol_set.mins = mins;
         sol_set.maxs = maxs;
+        sol_set.var_names = var_names;
+        sol_set.names_id = names_id;
         return sol_set;
     } catch (err) {
         console.log(`There was an error: ${err}`);
@@ -165,7 +200,7 @@ function export_image() {
 function export_manifold() {
     var sig_str = "IBEX MANIFOLD FILE ";
     var nb_proof = solution_set.nb_var - solution_set.nb_eq;
-    var n_int = 11 + plotted_sols.length*(1+nb_proof);
+    var n_int = 11 + plotted_sols.length * (1 + nb_proof);
     var n_dbl = 1 + 2 * plotted_sols.length * plotted_sols[0].lowers.length;
     var n_bytes = sig_str.length + 4 * n_int + 8 * n_dbl;
     var buffer = new ArrayBuffer(n_bytes);

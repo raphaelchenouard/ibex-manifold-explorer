@@ -96,6 +96,8 @@
     <script>
         var solution_set;
         var sols = []; // raw solutions
+        var var_names = []; // names of variables in the manifold
+        var names_id = {};
         var mins = []; // min value for each dimension
         var maxs = []; // max value for each dimension
 
@@ -296,11 +298,13 @@
 
                         // Function called after data loading achieved
                         reader.onloadend = function() {
-                            solution_set = parse_data_ibex_v2(reader.result);
+                            solution_set = parse_data_ibex(reader.result);
                             if (solution_set != null) {
                                 sols = sol_set.sols;
                                 mins = sol_set.mins;
                                 maxs = sol_set.maxs;
+                                var_names = sol_set.var_names;
+                                names_id = sol_set.names_id;
                                 // Initialize crossfilter with read solutions
 
                                 var c_filter = init_filtering(sols);

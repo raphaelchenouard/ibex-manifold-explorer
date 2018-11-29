@@ -80,6 +80,8 @@
 
     <script>
         var sols = []; // raw solutions
+        var var_names = []; // names of variables in the manifold
+        var names_id = {};
         var mins = []; // min value for each dimension
         var maxs = []; // max value for each dimension
 
@@ -177,7 +179,7 @@
         }
 
         // generate solutions from a buffer, ie. a binary mnf file
-        function parse_data_ibex_v2(buffer) {
+        function parse_data_ibex(buffer) {
             try {
                 // initialize solutions data arrays
                 sols = [];
@@ -212,6 +214,39 @@
                 cursor += 4;
                 console.log(nb_var + " variables, " + nb_eq + " equalities and " + nb_ineq + " inequalities");
 
+                var_names=[];
+                names_id={};
+                if (ver==4){ // V4 of manifold format with names for variables
+                    var cur_name = "";
+                    var ch = dec.decode(buffer.slice(20+cursor, 21+cursor)); //dec.decode(bytes);
+                    var i_ch = new Uint8Array(buffer.slice(20+cursor, 21+cursor));
+                    var prev_ich=1;
+                    cursor+=1;
+                    while (i_ch!=0 || prev_ich!=0){ // The list of names ends with an end of line
+                        if (i_ch == 0){ // End of a name
+                            var_names.push(cur_name);
+                            names_id[cur_name]=var_names.length-1;
+                            cur_name="";
+                        }
+                        else{ // A character of the name
+                            cur_name+=ch;
+                        }
+                        prev_ich = i_ch;
+                        ch = dec.decode(buffer.slice(20+cursor, 21+cursor)); //dec.decode(bytes);
+                        i_ch = new Uint8Array(buffer.slice(20+cursor, 21+cursor));
+                        cursor+=1;
+                    }
+                    console.log("Variables: "+var_names);
+                    // One more byte was read
+                    cursor-=1;
+                }
+                else { // v2
+                    // Creating default names for variables
+                    for (var i=1;i<=nb_var;i++){
+                        var_names.push("x"+i);
+                        names_id[cur_name]=var_names.length-1;
+                    }
+                }
                 // read the solving status that ended with this manifold (see ibex doc for that)
                 const result_status = view.getUint32(cursor, true);
                 cursor += 4;
@@ -610,11 +645,6 @@
 
         // Add inputs to update the graphic
         function create_controls(node) {
-            // Since manifold format does not contains names for dimensions, define some generic ones
-            var dim_names = [];
-            for (var i = 0; i < nb_var; i++) {
-                dim_names.push("x" + i);
-            }
             node.selectAll("*").remove();
 
             // Add a list selection for dimension of x axis
@@ -624,10 +654,10 @@
                 .attr('class', 'select')
                 .on('change', onchangeX);
             selX.selectAll("option")
-                .data(dim_names).enter()
+                .data(var_names).enter()
                 .append('option')
                 .property('selected', function(d) {
-                    return d === "x0";
+                    return d === var_names[0];
                 })
                 .text(function(d) {
                     return d;
@@ -638,10 +668,10 @@
                 .attr('class', 'select')
                 .on('change', onchangeY);
             selY.selectAll("option")
-                .data(dim_names).enter()
+                .data(var_names).enter()
                 .append('option')
                 .property('selected', function(d) {
-                    return d === "x1";
+                    return d === var_names[1];
                 })
                 .text(function(d) {
                     return d;
@@ -989,7 +1019,7 @@
 
                         // Function called after data loading achieved
                         reader.onloadend = function() {
-                            if (parse_data_ibex_v2(reader.result) == 1) {
+                            if (parse_data_ibex(reader.result) == 1) {
 
                             } else {
                                 console.log("Wrong file format!");

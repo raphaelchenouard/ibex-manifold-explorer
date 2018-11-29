@@ -1,10 +1,6 @@
 // Add inputs to update the graphic
 function create_controls(node) {
     // Since manifold format does not contains names for dimensions, define some generic ones
-    var dim_names = [];
-    for (var i = 0; i < nb_var; i++) {
-        dim_names.push("x" + i);
-    }
     node.selectAll("*").remove();
 
     // Add a list selection for dimension of x axis
@@ -14,10 +10,10 @@ function create_controls(node) {
         .attr('class', 'select')
         .on('change', onchangeX);
     selX.selectAll("option")
-        .data(dim_names).enter()
+        .data(var_names).enter()
         .append('option')
         .property('selected', function (d) {
-            return d === "x0";
+            return d === var_names[0];
         })
         .text(function (d) {
             return d;
@@ -28,10 +24,10 @@ function create_controls(node) {
         .attr('class', 'select')
         .on('change', onchangeY);
     selY.selectAll("option")
-        .data(dim_names).enter()
+        .data(var_names).enter()
         .append('option')
         .property('selected', function (d) {
-            return d === "x1";
+            return d === var_names[1];
         })
         .text(function (d) {
             return d;
