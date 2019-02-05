@@ -45,17 +45,19 @@ function parse_data_ibex(buffer) {
 
         var_names = [];
         names_id = {};
+        var nb_read_var=0;
         if (ver == 4) { // V4 of manifold format with names for variables
             var cur_name = "";
             var ch = dec.decode(buffer.slice(20 + cursor, 21 + cursor)); //dec.decode(bytes);
             var i_ch = new Uint8Array(buffer.slice(20 + cursor, 21 + cursor));
             var prev_ich = 1;
             cursor += 1;
-            while (i_ch != 0 || prev_ich != 0) { // The list of names ends with an end of line
+            while ((i_ch != 0 || prev_ich != 0) && nb_read_var<nb_var) { // The list of names ends with an end of line
                 if (i_ch == 0) { // End of a name
                     var_names.push(cur_name);
                     names_id[cur_name] = var_names.length - 1;
                     cur_name = "";
+                    nb_read_var+=1;
                 } else { // A character of the name
                     cur_name += ch;
                 }

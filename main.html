@@ -127,7 +127,7 @@
                 // Uint32 are stored on 4 bytes
                 cursor += 4;
                 console.log(signature + ver);
-                
+
                 // read the number of dimensions (ie. variables) of the manifold
                 nb_var = view.getUint32(cursor, true);
                 cursor += 4;
@@ -140,37 +140,37 @@
                 cursor += 4;
                 console.log(nb_var + " variables, " + nb_eq + " equalities and " + nb_ineq + " inequalities");
 
-                var_names=[];
-                names_id={};
-                if (ver==4){ // V4 of manifold format with names for variables
+                var_names = [];
+                names_id = {};
+                var nb_read_var = 0;
+                if (ver == 4) { // V4 of manifold format with names for variables
                     var cur_name = "";
-                    var ch = dec.decode(buffer.slice(20+cursor, 21+cursor)); //dec.decode(bytes);
-                    var i_ch = new Uint8Array(buffer.slice(20+cursor, 21+cursor));
-                    var prev_ich=1;
-                    cursor+=1;
-                    while (i_ch!=0 || prev_ich!=0){ // The list of names ends with an end of line
-                        if (i_ch == 0){ // End of a name
+                    var ch = dec.decode(buffer.slice(20 + cursor, 21 + cursor)); //dec.decode(bytes);
+                    var i_ch = new Uint8Array(buffer.slice(20 + cursor, 21 + cursor));
+                    var prev_ich = 1;
+                    cursor += 1;
+                    while ((i_ch != 0 || prev_ich != 0) && nb_read_var < nb_var) { // The list of names ends with an end of line
+                        if (i_ch == 0) { // End of a name
                             var_names.push(cur_name);
-                            names_id[cur_name]=var_names.length-1;
-                            cur_name="";
-                        }
-                        else{ // A character of the name
-                            cur_name+=ch;
+                            names_id[cur_name] = var_names.length - 1;
+                            cur_name = "";
+                            nb_read_var += 1;
+                        } else { // A character of the name
+                            cur_name += ch;
                         }
                         prev_ich = i_ch;
-                        ch = dec.decode(buffer.slice(20+cursor, 21+cursor)); //dec.decode(bytes);
-                        i_ch = new Uint8Array(buffer.slice(20+cursor, 21+cursor));
-                        cursor+=1;
+                        ch = dec.decode(buffer.slice(20 + cursor, 21 + cursor)); //dec.decode(bytes);
+                        i_ch = new Uint8Array(buffer.slice(20 + cursor, 21 + cursor));
+                        cursor += 1;
                     }
-                    console.log("Variables: "+var_names);
+                    console.log("Variables: " + var_names);
                     // One more byte was read
-                    cursor-=1;
-                }
-                else { // v2
+                    cursor -= 1;
+                } else { // v2
                     // Creating default names for variables
-                    for (var i=1;i<=nb_var;i++){
-                        var_names.push("x"+i);
-                        names_id[cur_name]=var_names.length-1;
+                    for (var i = 1; i <= nb_var; i++) {
+                        var_names.push("x" + i);
+                        names_id[cur_name] = var_names.length - 1;
                     }
                 }
                 // read the solving status that ended with this manifold (see ibex doc for that)
