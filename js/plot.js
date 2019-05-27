@@ -14,13 +14,16 @@ function create_plot(w = 800, h = 600, marg = null) {
     width = w - margin.left - margin.right;
     height = h - margin.top - margin.bottom;
 
-    platform = Stardust.platform("webgl-2d", canvas.node(), w, h);
+    platform = Stardust.platform("webgl-2d", canvas.node(), width, height);
+    //canvas.attr("transform","translate(" + margin.left + "," + margin.top + ")");
 
     var svg = d3.select("#svg_axis").attr("width", w).attr("height", h);
 
     // Initialize scale objects
-    xscale = Stardust.scale.linear().range([margin.left, margin.left + width]);
-    yscale = Stardust.scale.linear().range([height + margin.top, margin.top]);
+    //xscale = Stardust.scale.linear().range([margin.left, margin.left + width]);
+    xscale = Stardust.scale.linear().range([0, width]);
+    //yscale = Stardust.scale.linear().range([height + margin.top, margin.top]);
+    yscale = Stardust.scale.linear().range([height, 0]);
     // Initial current domain to min and max  of each dimension
     x_dom = [mins[curXDim], maxs[curXDim]];
     y_dom = [mins[curYDim], maxs[curYDim]];
@@ -34,7 +37,7 @@ function create_plot(w = 800, h = 600, marg = null) {
     // Add the x Axis
     gX = svg.append("g")
         .attr("class", "axis axis--x")
-        .attr("transform", "translate(" + 0 + "," + (height + margin.top) + ")")
+        .attr("transform", "translate(" + margin.left + "," + (height + margin.top) + ")")
         .call(xAxis);
     // Add the y Axis
     gY = svg.append("g")
@@ -46,8 +49,8 @@ function create_plot(w = 800, h = 600, marg = null) {
     svg.append("text")
         .attr("id", "legend_x")
         .attr("transform",
-            "translate(" + (w / 2) + " ," +
-            (height + margin.top + margin.bottom / 2) + ")")
+            "translate(" + (w -margin.left) + " ," +
+            (height + margin.top-2) + ")")
         .style("text-anchor", "middle")
         .text("x" + curXDim);
     // text label for the y axis
@@ -55,7 +58,7 @@ function create_plot(w = 800, h = 600, marg = null) {
         .attr("id", "legend_y")
         //.attr("transform", "rotate(-90)")
         .attr("x", margin.left / 2)
-        .attr("y", h / 2)
+        .attr("y", margin.top/2)//h / 2)
         .style("text-anchor", "middle")
         .text("x" + curYDim);
 
@@ -116,12 +119,16 @@ function create_plot(w = 800, h = 600, marg = null) {
     svg.append("g")
         .attr("transform", "translate(" + margin.left + "," + margin.top + ")")
     //.call(zoom);
+    svg.call(zoom)
+        .on("wheel", function () {
+            d3.event.preventDefault();
+        });
     canvas.call(zoom)
         .on("wheel", function () {
             d3.event.preventDefault();
         });
 
-    console.log(d3.zoomTransform(canvas.node()));
+    //console.log(d3.zoomTransform(canvas.node()));
 
     function zoomed() {
         console.log("zoomed: " + JSON.stringify(d3.event.transform));
@@ -170,13 +177,15 @@ function create_plot(w = 800, h = 600, marg = null) {
 
         update_plot_info();
         drawBoxes(plotted_sols);
-        drawAxis(canvas);
+        //drawAxis(canvas);
+        updateAxis();
     }
 
     update_plot_info();
     platform.clear();
     drawBoxes(plotted_sols);
-    drawAxis(canvas);
+    //drawAxis(canvas);
+    updateAxis();
 
     d3.timer(function () {
         fps.update();
@@ -184,6 +193,19 @@ function create_plot(w = 800, h = 600, marg = null) {
 }
 
 
+
+function updateAxis(){
+    
+    x_sc.domain(xscale.domain());
+    y_sc.domain(yscale.domain());
+
+    /*xAxis = d3.axisBottom(x_sc).ticks(grid_size);
+    yAxis = d3.axisLeft(y_sc).ticks(grid_size);
+    gX.call(xAxis);
+    gY.call(yAxis);*/
+    xAxis.scale(x_sc);
+    yAxis.scale(y_sc);
+}
 
 function drawAxis(canvas, grid_size = 20) {
     //var ctx = canvas_axis.node().getContext('2d');

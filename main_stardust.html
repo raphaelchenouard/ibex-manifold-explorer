@@ -31,25 +31,32 @@
 
         .plot {
             background-color: transparent;
-            position: absolute;
-            /*height: 600px;
-            width: 800px;*/
         }
 
         #canvas_plot {
-            border: 1px dotted #ccc;
+            /*border: 1px dotted #ccc;*/
             z-index: 1;
+            margin: 0;
+            padding: 0;
+            position: absolute;
+            left: 50;
+            top: 100
         }
 
         #svg_axis {
             z-index: 0;
+            margin: 0;
+            padding: 0;
+            position: absolute;
+            left: 0;
+            top: 100
         }
 
         div#tooltip {
             position: absolute;
             display: inline-block;
             padding: 10px;
-            font-family: 'Open Sans' sans-serif;
+            font-family: 'Open Sans'sans-serif;
             color: #000;
             background-color: #fff;
             border: 1px solid #999;
@@ -80,9 +87,9 @@
             <!--div class="fps"></div-->
         </div>
         <div id="fps"></div>
+        <svg id="svg_axis"></svg>
         <canvas id="canvas_plot" class="plot"></canvas>
         <canvas id="canvas_image" class="plot"></canvas>
-        <svg id="svg_axis"></svg>
         <div id="tooltip">hello</div>
     </div>
     <div id="detail">
@@ -94,7 +101,7 @@
 
 
     <script>
-        var solution_set;
+        var sol_set;
         var sols = []; // raw solutions
         var var_names = []; // names of variables in the manifold
         var names_id = {};
@@ -137,7 +144,7 @@
         }
         var status_color = ["green", "yellow", "grey", "lightgrey"]; // colors use to fill boxes depending on their status code
 
-        var canvas_color =   [
+        var canvas_color = [
             [0, 255, 0, .2],
             [255, 0, 0, .2],
             [0, 0, 255, .2],
@@ -210,7 +217,8 @@
             update_plot_info();
 
             drawBoxes(plotted_sols);
-            drawAxis(canvas);
+            //drawAxis(canvas);
+            updateAxis();
         }
 
 
@@ -239,7 +247,8 @@
             update_plot_info();
 
             drawBoxes(plotted_sols);
-            drawAxis(canvas);
+            //drawAxis(canvas);
+            updateAxis();
         }
 
 
@@ -267,12 +276,13 @@
             t.x = 0;
             t.y = 0;
             t.k = 1;
-            console.log(d3.zoomTransform(canvas.node()));
+            //console.log(d3.zoomTransform(canvas.node()));
 
             update_plot_info();
 
             drawBoxes(plotted_sols);
-            drawAxis(canvas);
+            //drawAxis(canvas);
+            updateAxis();
         }
 
 
@@ -296,15 +306,29 @@
                         var f = dt.items[i].getAsFile();
                         var reader = new FileReader();
 
+                        var ext = f.name.substr(f.name.length-4,4);
+                        
                         // Function called after data loading achieved
                         reader.onloadend = function() {
-                            solution_set = parse_data_ibex(reader.result);
-                            if (solution_set != null) {
+                            if (ext == ".mnf"){
+                                sol_set = parse_data_mnf(reader.result);
+                            }
+                            else if (ext == ".cov"){
+                                sol_set = parse_data_cov(reader.result);
+                            }
+                            else {
+                                console.log("Unknown file extension!");
+                                sol_set = null;
+                            }
+                            if (sol_set != null) {
                                 sols = sol_set.sols;
                                 mins = sol_set.mins;
                                 maxs = sol_set.maxs;
                                 var_names = sol_set.var_names;
                                 names_id = sol_set.names_id;
+                                
+                                console.log("Names of variables: "+var_names);
+                                
                                 // Initialize crossfilter with read solutions
 
                                 var c_filter = init_filtering(sols);
@@ -322,7 +346,8 @@
 
                                 create_plot();
                                 drawBoxes(plotted_sols);
-                                drawAxis(canvas);
+                                //drawAxis(canvas);
+                                updateAxis();
                             } else {
                                 console.log("Wrong file format!");
                             }
