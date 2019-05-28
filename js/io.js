@@ -223,6 +223,7 @@ function parse_cov_list(data, cursor, nb_v, sol_set) {
             cursor += 8;
             sol.lowers.push(low);
             sol.uppers.push(up);
+            sol.width.push(up - low);
             sol.status = 2; // Unkown by default
             //console.log(i + "," + j + ": [" + low + "," + up + ']');
             // search for the min and max values for each dimension

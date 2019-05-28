@@ -3,9 +3,10 @@
 
 <head>
     <meta charset="utf-8">
-    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/crossfilter2/1.4.3/crossfilter.min.js"></script>
-    <script type="text/javascript" src="https://d3js.org/d3.v5.min.js"></script>
-    <script defer src="https://use.fontawesome.com/releases/v5.0.6/js/all.js"></script>
+    <script type="text/javascript" src="libs/crossfilter.v1.4.3.min.js"></script>
+    <script type="text/javascript" src="libs/d3.v5.min.js"></script>
+    <script defer src="libs/fontawesome.v5.0.6.all.js"></script>
+    <script type="text/javascript" src="js/io.js"></script>
     <style>
         #drop_zone {
             border: 2px dashed grey;
@@ -1017,32 +1018,48 @@
                         var f = dt.items[i].getAsFile();
                         var reader = new FileReader();
 
+                        var ext = f.name.substr(f.name.length-4,4);
+                        
                         // Function called after data loading achieved
                         reader.onloadend = function() {
-                            if (parse_data_ibex(reader.result) == 1) {
+                            if (ext == ".mnf"){
+                                sol_set = parse_data_mnf(reader.result);
+                            }
+                            else if (ext == ".cov"){
+                                sol_set = parse_data_cov(reader.result);
+                            }
+                            else {
+                                console.log("Unknown file extension!");
+                                sol_set = null;
+                            }
+                            if (sol_set != null) {
+                                sols = sol_set.sols;
+                                mins = sol_set.mins;
+                                maxs = sol_set.maxs;
+                                var_names = sol_set.var_names;
+                                names_id = sol_set.names_id;
+                                // Initialize crossfilter with read solutions
 
+                                var c_filter = init_filtering(sols);
+
+                                cf = c_filter.cf;
+
+                                // create filters
+                                filter_sol = c_filter.filter_sol;
+                                filter_by_status = c_filter.filter_by_status;
+
+                                plotted_sols = filter_by_status.top(Infinity);
+                                console.log(plotted_sols.length + " filtered solutions");
+
+                                create_controls(d3.select("#control"));
+
+                                create_plot();
+                                drawBoxes(plotted_sols);
+                                //drawAxis(canvas);
+                                updateAxis();
                             } else {
                                 console.log("Wrong file format!");
                             }
-
-                            // Initialize crossfilter with read solutions
-                            cf = crossfilter(sols);
-
-                            // create filters
-                            filter_sol = cf.dimension(function(d) {
-                                return d;
-                            });
-                            filter_by_status = cf.dimension(function(d) {
-                                return d.status;
-                            });
-                            // start with inner solutions only
-                            filter_by_status.filterExact(0);
-                            plotted_sols = filter_by_status.top(Infinity);
-                            console.log(plotted_sols.length + " filtered solutions");
-
-                            create_controls(d3.select("#control"));
-
-                            create_plot();
                         }
 
                         reader.readAsArrayBuffer(f);

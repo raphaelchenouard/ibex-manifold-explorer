@@ -105,7 +105,7 @@
         }
 
         // generate solutions from a buffer, ie. a binary mnf file
-        function parse_data_ibex(buffer) {
+        function parse_data_mnf(buffer) {
             try {
                 // initialize solutions data arrays
                 sols = [];
@@ -266,6 +266,457 @@
                 return 0;
             }
         }
+
+
+
+        function parse_cov_list(data, cursor, nb_v, sol_set) {
+            var nb_sol;
+            // read the number of boxes
+            nb_sol = data.getUint32(cursor, true);
+            cursor += 4;
+
+            console.log(nb_sol + " solutions to parse!");
+
+            var mins = []; // list of minimums, i.e. lower bounds
+            var maxs = []; // list of maximums, i.e. upper bounds
+
+            //sol_set.sols = [];
+
+            sol_set.nb_inner = 0;
+            sol_set.nb_boundary = 0;
+            sol_set.nb_unknown = nb_sol;
+            sol_set.nb_pending = 0;
+
+            // read all the solutions
+            for (var i = 0; i < nb_sol; i++) {
+                // create a new object to manipulate solutions
+                var sol = new Object();
+                // storing lower and upper bound separately
+                sol.lowers = [];
+                sol.uppers = [];
+                // storing the width of each interval
+                sol.width = [];
+                // read all dimension values
+                for (var j = 0; j < nb_v; j++) {
+                    // read the lower bound
+                    var low = data.getFloat64(cursor, true);
+                    cursor += 8;
+                    // read the upper bound
+                    var up = data.getFloat64(cursor, true);
+                    cursor += 8;
+                    sol.lowers.push(low);
+                    sol.uppers.push(up);
+                    sol.width.push(up - low);
+                    sol.status = 2; // Unkown by default
+                    //console.log(i + "," + j + ": [" + low + "," + up + ']');
+                    // search for the min and max values for each dimension
+                    if (i == 0) {
+                        mins.push(low);
+                        maxs.push(up);
+                    } else {
+                        if (mins[j] > low) {
+                            mins[j] = low;
+                        }
+                        if (maxs[j] < up) {
+                            maxs[j] = up;
+                        }
+                    }
+                }
+                sol_set.sols.push(sol);
+            }
+            sol_set.mins = mins;
+            sol_set.maxs = maxs;
+            return cursor;
+        }
+
+        function parse_cov_inner(data, cursor, sol_set) {
+            //var nb_inner;
+            // read the number of boxes
+            sol_set.nb_inner = data.getUint32(cursor, true);
+            cursor += 4;
+
+            console.log(sol_set.nb_inner + " inner boxes");
+
+            // read all the solutions
+            for (var i = 0; i < sol_set.nb_inner; i++) {
+                var idx;
+                idx = data.getUint32(cursor, true);
+                cursor += 4;
+                sol_set.sols[idx].status = 0;
+            }
+            return cursor;
+        }
+
+        function parse_cov_boundary(data, cursor, sol_set) {
+            var bnd_type;
+            bnd_type = data.getUint32(cursor, true);
+            cursor += 4;
+            //var nb_boundary;
+            // read the number of boxes
+            sol_set.nb_boundary = data.getUint32(cursor, true);
+            cursor += 4;
+
+            console.log(sol_set.nb_boundary + " boundary boxes");
+
+            // read all the solutions
+            for (var i = 0; i < sol_set.nb_boundary; i++) {
+                var idx;
+                idx = data.getUint32(cursor, true);
+                cursor += 4;
+                sol_set.sols[idx].status = 1;
+            }
+            return cursor;
+        }
+
+        function parse_cov_manifold(data, cursor, sol_set) {
+            // read the number of equations in the problem from which this manifold come from
+            const nb_eq = data.getUint32(cursor, true);
+            cursor += 4;
+            sol_set.nb_eq = nb_eq;
+            // read the number of inequations in the problem from which this manifold come from
+            const nb_ineq = data.getUint32(cursor, true);
+            cursor += 4;
+            sol_set.nb_ineq = nb_ineq;
+            console.log(sol_set.nb_var + " variables, " + nb_eq + " equalities and " + nb_ineq + " inequalities");
+
+            var bnd_type;
+            bnd_type = data.getUint32(cursor, true);
+            cursor += 4;
+            console.log("Boundary type: " + bnd_type);
+
+            var nb_proof = sol_set.nb_var - nb_eq;
+
+            if (nb_eq > 0) {
+                var nb_sol;
+                // read the number of boxes
+                nb_sol = data.getUint32(cursor, true);
+                cursor += 4;
+
+                console.log(nb_sol + " certified solutions in manifold");
+                sol_set.nb_unknown -= nb_sol;
+                sol_set.nb_inner += nb_sol;
+                // read all the solutions
+                for (var i = 0; i < nb_sol; i++) {
+                    var idx;
+                    idx = data.getUint32(cursor, true);
+                    cursor += 4;
+
+                    //console.log("IBU_" + i + ": " + idx);
+                    sol_set.sols[idx].status = 1; // boundary with proved solution
+                    if (nb_proof > 0) { //(nb_eq < nb_v) {
+                        sol_set.sols[idx].proof = [];
+
+                        //console.log("manifold:" + i);
+                        for (var j = 0; j < nb_proof; j++) {
+                            sol_set.sols[idx].proof.push(data.getUint32(cursor, true)); // unused
+                            sol_set.sols[idx].status = 0;
+                            cursor += 4;
+                        }
+                    }
+                    sol_set.sols[idx].unicity = [];
+                    for (var k = 0; k < sol_set.nb_var; k++) {
+                        // read the lower bound
+                        var low = data.getFloat64(cursor, true);
+                        cursor += 8;
+                        // read the upper bound
+                        var up = data.getFloat64(cursor, true);
+                        cursor += 8;
+                        sol_set.sols[idx].unicity.push([low, up])
+                        //console.log("unicity[" + i + "]=" + [low, up].toString());
+                    }
+
+                }
+            }
+            //var nb_bnd;
+            // read the number of boxes
+            sol_set.nb_boundary = data.getUint32(cursor, true);
+            cursor += 4;
+            console.log(sol_set.nb_boundary + " boundary boxes in manifold");
+            for (var i = 0; i < sol_set.nb_boundary; i++) {
+                var idx;
+                idx = data.getUint32(cursor, true);
+                cursor += 4;
+                sol_set.sols[idx].status = 1; // boundary with boundary status proved
+                //console.log("IBU_" + i + ": " + idx);
+
+                if (nb_eq > 0 && nb_eq < nb_ineq) {
+                    sol_set.sols[idx].proof = [];
+                    for (var j = 0; j < nb_proof; j++) {
+                        var jdx;
+                        jdx = data.getUint32(cursor, true);
+                        cursor += 4;
+                        //console.log("jdx_" + j + ": " + jdx);
+                        sol_set.sols[idx].proof.push(jdx); // unused
+                        sol_set.sols[idx].status = 1;
+                    }
+                }
+            }
+
+
+            return cursor;
+        }
+
+        function parse_cov_names(view, cursor, sol_set) {
+            var nb_read_var = 0;
+
+            sol_set.var_names = [];
+            sol_set.names_id = {};
+
+            var i_ch = view.getUint8(cursor);
+            cursor += 1;
+
+            var cur_name = ""; //String.fromCharCode(i_ch);
+            var tmp = 0;
+            console.log(sol_set.nb_var + " names to read:");
+            while (nb_read_var < sol_set.nb_var && tmp < 20) {
+                if (i_ch == 0 && cur_name.length > 0) { // End of a name
+                    sol_set.var_names.push(cur_name);
+                    sol_set.names_id[cur_name] = sol_set.var_names.length - 1;
+                    console.log("New name: " + cur_name);
+                    cur_name = "";
+                    nb_read_var += 1;
+                } else { // A character of the name
+                    cur_name += String.fromCharCode(i_ch);
+                    //console.log("Current name: "+cur_name);
+                }
+                i_ch = view.getUint8(cursor); // new Uint8Array(data.slice(20 + cursor, 21 + cursor));
+                //console.log(i_ch);
+                cursor += 1;
+                tmp += 1;
+            }
+            return cursor - 1;
+        }
+
+
+        function parse_cov_solver_data(data, view, cursor, sol_set) {
+            /*var dec = new TextDecoder();
+            var names_id = {};
+            var var_names = [];
+            var nb_read_var = 0;
+            var cur_name = "";
+            var ch = dec.decode(data.slice(20 + cursor, 21 + cursor)); //dec.decode(bytes);
+            var i_ch = new Uint8Array(data.slice(20 + cursor, 21 + cursor));
+            var prev_ich = 1;
+            cursor += 1;
+            while ((i_ch != 0 || prev_ich != 0) && nb_read_var < nb_var) { // The list of names ends with an end of line
+                if (i_ch == 0) { // End of a name
+                    var_names.push(cur_name);
+                    names_id[cur_name] = var_names.length - 1;
+                    cur_name = "";
+                    nb_read_var += 1;
+                } else { // A character of the name
+                    cur_name += ch;
+                }
+                prev_ich = i_ch;
+                ch = dec.decode(data.slice(20 + cursor, 21 + cursor)); //dec.decode(bytes);
+                i_ch = new Uint8Array(data.slice(20 + cursor, 21 + cursor));
+                cursor += 1;
+            }
+            console.log("Variables: " + var_names);
+            // One more byte was read
+            cursor -= 1;*/
+            cursor = parse_cov_names(view, cursor, sol_set);
+
+            // read the solving status that ended with this manifold (see ibex doc for that)
+            const result_status = view.getUint32(cursor, true);
+            cursor += 4;
+            console.log("Result status: " + result_status);
+            //sol_set.status = result_status;
+
+            // read the solving time
+            const solving_time = view.getFloat64(cursor, true);
+            // Float64 (double) are stored on 8 bytes
+            cursor += 8;
+            // Number of cells used to perform the solving process
+            const nb_cells = view.getUint32(cursor, true);
+            cursor += 4;
+            console.log("Solving time: " + solving_time + "s, number of cells: " + nb_cells);
+
+            //var nb_pending;
+            // read the number of boxes
+            sol_set.nb_pending = view.getUint32(cursor, true);
+            cursor += 4;
+
+            // read all the solutions
+            for (var i = 0; i < sol_set.nb_pending; i++) {
+                var idx;
+                idx = view.getUint32(cursor, true);
+                cursor += 4;
+                sol_set.sols[idx].status = 3;
+            }
+            //sol_set.names_id = names_id;
+            //sol_set.var_names = var_names;
+            return cursor;
+        }
+
+
+        function parse_cov_optim_data(data, view, cursor, sol_set) {
+            // TODO: uncomment code when cov optim data has names
+            sol_set.var_names = [];
+            sol_set.names_id = {};
+            cursor += sol_set.nb_var;
+            //cursor = parse_cov_names(view,cursor,sol_set);
+
+
+            // read the optimizing status
+            const result_status = view.getUint32(cursor, true);
+            cursor += 4;
+            console.log("Result status: " + result_status);
+            //sol_set.status = result_status;
+
+            // read the covering status
+            const covering_status = view.getUint32(cursor, true);
+            cursor += 4;
+            console.log("Covering status: " + result_status + "(1 <=> covering of the extended space (vars+obj), 0 <=> covering of the original space (variables only))");
+
+            var uplo, uplo_eps, loup;
+
+            uplo = view.getFloat64(cursor, true);
+            cursor += 8;
+            uplo_eps = view.getFloat64(cursor, true);
+            cursor += 8;
+            loup = view.getFloat64(cursor, true);
+            cursor += 8;
+
+            console.log("uplo: " + uplo + " uplo-of-epsboxes: " + uplo_eps);
+            console.log("loup: " + loup);
+
+            var feasible_point; //, loup_point=null;
+            feasible_point = view.getUint32(cursor, true);
+            cursor += 4;
+            if (feasible_point == 1) {
+                /*loup_point=new Array();
+                for (var i=0;i<sol_set.nb_var+covering_status;i++){
+                    loup_point.push(view.getFloat64(cursor, true));
+                    cursor += 8;
+                }*/
+                console.log("Best feasible point found: " + JSON.stringify(sol_set.sols[0]));
+            } else {
+                console.log("No best feasible point found!");
+            }
+
+            // read the solving time
+            const solving_time = view.getFloat64(cursor, true);
+            // Float64 (double) are stored on 8 bytes
+            cursor += 8;
+            // Number of cells used to perform the solving process
+            const nb_cells = view.getUint32(cursor, true);
+            cursor += 4;
+            console.log("Solving time: " + solving_time + "s, number of cells: " + nb_cells);
+
+            //sol_set.names_id = names_id;
+            //sol_set.var_names = var_names;
+            return cursor;
+        }
+
+
+        // return a solution set object from a buffer, ie. a binary mnf file
+        function parse_data_cov(buffer) {
+            console.log("Parsing Covering binary file...");
+            // initialize solutions data arrays
+            var sols = []; // list of solutions
+            var var_names = []; // names of variables in the manifold
+            var names_id = {};
+            var mins = []; // list of minimums, i.e. lower bounds
+            var maxs = []; // list of maximums, i.e. upper bounds
+
+            sol_set = new Object(); // object to store all data about the solution set
+
+            try {
+                // use standard js TextDecoder to process binary data
+                var dec = new TextDecoder();
+                // The file starts with a signature on 20 bytes which should look like: IBEX MANIFOLD FILE  2
+                // 2 is a number corresponding to the current version of this format
+                // start to read the 19 first bytes
+                const signature = dec.decode(buffer.slice(0, 19));
+                // use of standard js DataView to convert bytes to numbers (float or integer) or strings
+                // we start the view to byte 20 to avoid considering the 19 first bytes
+                const view = new DataView(buffer.slice(20));
+                // initialization of current cursor in the view
+                var cursor = 0;
+                // read the current level of the format (2: Optim, 5: Solver)
+                const level = view.getUint32(cursor, true);
+                // Uint32 are stored on 4 bytes
+                cursor += 4;
+
+                console.log(signature + level);
+                sol_set.version = level;
+
+                var format_id = new Array(level + 1);
+                var format_ver = new Array(level + 1);
+
+                for (var i = 0; i <= level; i++) {
+                    format_id[i] = view.getUint32(cursor, true);
+                    cursor += 4;
+                }
+                for (var i = 0; i <= level; i++) {
+                    format_ver[i] = view.getUint32(cursor, true);
+                    cursor += 4;
+                }
+
+                console.log("Current format identification: " + format_id.toString());
+                console.log("Current format version: " + format_ver.toString());
+
+                var nb_var;
+                nb_var = view.getUint32(cursor, true);
+                cursor += 4;
+                console.log(nb_var + " dimensions in covering!");
+                sol_set.nb_var = nb_var;
+
+                if (level == 5) { // solver data
+
+                    sol_set.sols = new Array();
+                    if (format_id[1] == 0) {
+                        cursor = parse_cov_list(view, cursor, nb_var, sol_set);
+                        console.log(sol_set.sols.length + " solutions parsed");
+                    }
+                    try {
+                        if (format_id[2] == 0) {
+                            cursor = parse_cov_inner(view, cursor, sol_set);
+                        }
+                        if (format_id[3] == 0) {
+                            cursor = parse_cov_boundary(view, cursor, sol_set);
+                        }
+                        if (format_id[4] == 0) {
+                            cursor = parse_cov_manifold(view, cursor, sol_set);
+                        }
+                        if (format_id[5] == 0) {
+                            cursor = parse_cov_solver_data(buffer, view, cursor, sol_set);
+                            var_names = sol_set.var_names;
+                        }
+                    } catch (err) {
+                        console.log(`There was an error while parsing Solver COV additional format: ${err}`);
+                        //return null;
+                    }
+
+                } else if (level == 2) {
+                    sol_set.sols = new Array();
+                    if (format_id[1] == 0) {
+                        cursor = parse_cov_list(view, cursor, nb_var, sol_set);
+                        console.log(sol_set.sols.length + " solutions parsed");
+                    }
+                    try {
+                        if (format_id[2] == 1) {
+                            cursor = parse_cov_optim_data(buffer, view, cursor, sol_set, nb_var);
+                            var_names = sol_set.var_names;
+                        }
+                    } catch (err) {
+                        console.log(`There was an error while parsing Optimizer COV additional format: ${err}`);
+                        //return null;
+                    }
+                }
+                console.log(sol_set.sols.length + " solutions read using " + cursor + " Bytes!");
+                //return sol_set;
+            } catch (err) {
+                console.log(`There was an error: ${err}`);
+                //return null;
+            }
+
+            console.log(JSON.stringify(sol_set));
+
+            return sol_set;
+        }
+
 
 
 
@@ -948,32 +1399,45 @@
                         var f = dt.items[i].getAsFile();
                         var reader = new FileReader();
 
+                        var ext = f.name.substr(f.name.length - 4, 4);
+
                         // Function called after data loading achieved
                         reader.onloadend = function() {
-                            if (parse_data_ibex(reader.result) == 1) {
-
+                            if (ext == ".mnf") {
+                                sol_set = parse_data_mnf(reader.result);
+                            } else if (ext == ".cov") {
+                                sol_set = parse_data_cov(reader.result);
                             } else {
                                 console.log("Wrong file format!");
                             }
 
-                            // Initialize crossfilter with read solutions
-                            cf = crossfilter(sols);
+                            if (sol_set != null) {
+                                sols = sol_set.sols;
+                                mins = sol_set.mins;
+                                maxs = sol_set.maxs;
+                                var_names = sol_set.var_names;
+                                names_id = sol_set.names_id;
+                                // Initialize crossfilter with read solutions
+                                cf = crossfilter(sols);
 
-                            // create filters
-                            filter_sol = cf.dimension(function(d) {
-                                return d;
-                            });
-                            filter_by_status = cf.dimension(function(d) {
-                                return d.status;
-                            });
-                            // start with inner solutions only
-                            filter_by_status.filterExact(0);
-                            plotted_sols = filter_by_status.top(Infinity);
-                            console.log(plotted_sols.length + " filtered solutions");
+                                // create filters
+                                filter_sol = cf.dimension(function(d) {
+                                    return d;
+                                });
+                                filter_by_status = cf.dimension(function(d) {
+                                    return d.status;
+                                });
+                                // start with inner solutions only
+                                filter_by_status.filterExact(0);
+                                plotted_sols = filter_by_status.top(Infinity);
+                                console.log(plotted_sols.length + " filtered solutions");
 
-                            create_controls(d3.select("#control"));
+                                create_controls(d3.select("#control"));
 
-                            create_svg(d3.select("#explorer"));
+                                create_svg(d3.select("#explorer"));
+                            } else {
+                                console.log("Wrong file format!");
+                            }
                         }
 
                         reader.readAsArrayBuffer(f);
